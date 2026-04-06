@@ -4,6 +4,17 @@ const express  = require("express");
 const QRCode = require("qrcode");
 const axios    = require("axios");
 
+
+const fs = require("fs");
+
+// 🔥 limpiar sesión bloqueada automáticamente
+try {
+    fs.rmSync("./.wwebjs_auth", { recursive: true, force: true });
+    console.log("🧹 Sesión anterior eliminada");
+} catch (e) {
+    console.log("No había sesión previa");
+}
+
 // ─────────────────────────────────────────────
 // CONFIGURACION
 // ─────────────────────────────────────────────
