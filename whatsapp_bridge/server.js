@@ -57,7 +57,6 @@ const client = new Client({
     puppeteer: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         headless: true,
-        userDataDir: "/tmp/puppeteer-profile",
         args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
