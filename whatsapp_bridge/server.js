@@ -7,8 +7,8 @@ const axios    = require("axios");
 // ─────────────────────────────────────────────
 // CONFIGURACION
 // ─────────────────────────────────────────────
-const PORT       = process.env.PORT || 3000;
-const AUTH_TOKEN = process.env.BRIDGE_TOKEN || "protecta2026";
+const PORT       = 3000;
+const AUTH_TOKEN = "protecta2026";
 
 // Mapeo: nombre logico (config.py) → nombre EXACTO del grupo en WhatsApp
 const GROUP_MAP = {
