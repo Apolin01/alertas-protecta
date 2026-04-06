@@ -1,14 +1,14 @@
 
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const express  = require("express");
-const qrcode   = require("qrcode-terminal");
+const QRCode = require("qrcode");
 const axios    = require("axios");
 
 // ─────────────────────────────────────────────
 // CONFIGURACION
 // ─────────────────────────────────────────────
-const PORT       = 3000;
-const AUTH_TOKEN = "protecta2026";
+const PORT       = process.env.PORT || 3000;
+const AUTH_TOKEN = process.env.BRIDGE_TOKEN || "protecta2026";
 
 // Mapeo: nombre logico (config.py) → nombre EXACTO del grupo en WhatsApp
 const GROUP_MAP = {
@@ -54,18 +54,25 @@ const client = new Client({
 
 let isReady    = false;
 let groupCache = {};  // nombre exacto → chatId
+let qrImageBase64 = "";
+let lastQrText = "";
 
-client.on("qr", (qr) => {
-    console.log("\n╔══════════════════════════════════════╗");
-    console.log("║  ESCANEA EL QR CON TU WHATSAPP       ║");
-    console.log("║  WhatsApp → Dispositivos vinculados  ║");
-    console.log("╚══════════════════════════════════════╝\n");
-    qrcode.generate(qr, { small: true });
+client.on("qr", async (qr) => {
+    console.log("\nNuevo QR generado. Abre /qr en el navegador.");
+    lastQrText = qr;
+
+    try {
+        qrImageBase64 = await QRCode.toDataURL(qr);
+        console.log("QR disponible en /qr");
+    } catch (err) {
+        console.error("Error generando imagen QR:", err.message);
+    }
 });
-
 client.on("ready", async () => {
     console.log("\n✅ WhatsApp conectado.");
     isReady = true;
+    qrImageBase64 = "";
+    lastQrText = "";
     await buildGroupCache();
 });
 
@@ -114,11 +121,53 @@ async function buildGroupCache() {
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
+
+app.get("/qr", (req, res) => {
+    if (isReady) {
+        return res.send(`
+            <html>
+              <body style="font-family: Arial; text-align:center; padding:40px;">
+                <h2>WhatsApp ya está conectado</h2>
+                <p>No necesitas escanear un nuevo QR.</p>
+              </body>
+            </html>
+        `);
+    }
+
+    if (!qrImageBase64) {
+        return res.send(`
+            <html>
+              <body style="font-family: Arial; text-align:center; padding:40px;">
+                <h2>QR aún no disponible</h2>
+                <p>Espera unos segundos y recarga la página.</p>
+              </body>
+            </html>
+        `);
+    }
+
+    return res.send(`
+        <html>
+          <body style="font-family: Arial; text-align:center; padding:40px;">
+            <h2>Escanea el QR con WhatsApp</h2>
+            <p>WhatsApp → Dispositivos vinculados → Vincular un dispositivo</p>
+            <img src="${qrImageBase64}" style="max-width:320px; width:100%;" />
+          </body>
+        </html>
+    `);
+});
+
 // Auth middleware
 app.use((req, res, next) => {
+    const publicPaths = ["/qr", "/status"];
+
+    if (publicPaths.includes(req.path)) {
+        return next();
+    }
+
     if (req.headers["x-auth-token"] !== AUTH_TOKEN) {
         return res.status(401).json({ error: "Token invalido" });
     }
+
     next();
 });
 
