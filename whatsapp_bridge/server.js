@@ -84,12 +84,16 @@ client.on("qr", async (qr) => {
         console.error("Error generando imagen QR:", err.message);
     }
 });
-client.on("ready", async () => {
+client.on("ready", () => {
     console.log("\n✅ WhatsApp conectado.");
     isReady = true;
     qrImageBase64 = "";
     lastQrText = "";
-    console.log("WhatsApp listo. La cache de grupos se cargará bajo demanda.");
+
+    // cargar en background (no bloquea)
+    setTimeout(() => {
+        buildGroupCache();
+    }, 10000);
 });
 
 client.on("disconnected", (reason) => {
@@ -173,7 +177,7 @@ app.get("/qr", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-    res.status(200).send("wa-bridge ok");
+    res.send("wa-bridge funcionando");
 });
 
 // Auth middleware
