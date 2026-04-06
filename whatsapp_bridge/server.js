@@ -50,15 +50,21 @@ const GROUP_MAP = {
 // CLIENTE WHATSAPP
 // ─────────────────────────────────────────────
 const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: "./.wwebjs_auth" }),
+    authStrategy: new LocalAuth({
+        clientId: "railway",
+        dataPath: "/tmp/.wwebjs_auth"
+    }),
     puppeteer: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         headless: true,
+        userDataDir: "/tmp/puppeteer-profile",
         args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu",
+            "--no-zygote",
+            "--single-process",
         ],
     },
 });
