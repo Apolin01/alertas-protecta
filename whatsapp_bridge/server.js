@@ -9,7 +9,7 @@ const fs = require("fs");
 
 // 🔥 limpiar sesión bloqueada automáticamente
 try {
-    fs.rmSync("./.wwebjs_auth", { recursive: true, force: true });
+    fs.rmSync("/tmp/.wwebjs_auth", { recursive: true, force: true });
     console.log("🧹 Sesión anterior eliminada");
 } catch (e) {
     console.log("No había sesión previa");
@@ -89,7 +89,7 @@ client.on("ready", async () => {
     isReady = true;
     qrImageBase64 = "";
     lastQrText = "";
-    await buildGroupCache();
+    console.log("WhatsApp listo. La cache de grupos se cargará bajo demanda.");
 });
 
 client.on("disconnected", (reason) => {
@@ -170,6 +170,10 @@ app.get("/qr", (req, res) => {
           </body>
         </html>
     `);
+});
+
+app.get("/", (req, res) => {
+    res.status(200).send("wa-bridge ok");
 });
 
 // Auth middleware
