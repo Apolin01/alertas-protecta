@@ -42,7 +42,7 @@ class Config:
     # Pausa entre ciclos completos (segundos)
     # Despues de leer las 239 paginas, espera antes de volver a empezar
     # 1800 = 30 minutos entre ciclos completos
-    DELAY_BETWEEN_CYCLES = 60   # pausa minima entre ciclos (1 min)
+    DELAY_BETWEEN_CYCLES = 3600  # pausa entre ciclos completos (1 hora)
 
     # Paginas leidas por ciclo (rotacion para ahorrar credito Apify)
     # 239 paginas / 25 por ciclo = ~10 grupos → cada pagina se lee cada 5h
@@ -317,8 +317,6 @@ class Config:
     # ─────────────────────────────────────────────
     # FACEBOOK SCRAPING (Apify)
     # ─────────────────────────────────────────────
-    APIFY_TOKEN = os.getenv("APIFY_TOKEN", "")
-
     FACEBOOK_PAGES = [
 
         # ── Antamina (72 paginas) ──
@@ -575,8 +573,7 @@ class Config:
         "ONAMIAP.pe",  # ONAMIAP
     ]
 
-    POSTS_PER_PAGE = 3     
-    APIFY_BATCH_SIZE = 25  
+    POSTS_PER_PAGE = 3
     WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "bridge")
 
   

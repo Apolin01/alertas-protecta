@@ -247,17 +247,30 @@ app.post("/send", async (req, res) => {
     try {
         let sent_with_image = false;
 
-        if (image_url && image_url.startsWith("http")) {
+        if (image_url) {
             try {
-                const media = await MessageMedia.fromUrl(image_url, {
-                    unsafeMime: true,
-                    reqOptions: { timeout: 10000 },
-                });
-                await client.sendMessage(chatId, media, { caption: message });
-                sent_with_image = true;
-                console.log(`✅ [imagen] → "${realName}"`);
+                let media;
+                if (image_url.startsWith("data:")) {
+                    // Base64 enviado desde el scraper (imagen descargada con sesión FB)
+                    const [header, data] = image_url.split(",");
+                    const mimetype = header.split(":")[1].split(";")[0];
+                    media = new MessageMedia(mimetype, data);
+                } else if (image_url.startsWith("http")) {
+                    // URL pública
+                    media = await MessageMedia.fromUrl(image_url, {
+                        unsafeMime: true,
+                        reqOptions: { timeout: 10000 },
+                    });
+                }
+
+                if (media) {
+                    await client.sendMessage(chatId, media, { caption: message });
+                    sent_with_image = true;
+                    console.log(`✅ [imagen] → "${realName}"`);
+                } else {
+                    throw new Error("media no generado");
+                }
             } catch (imgErr) {
-                // Si falla la imagen, enviar solo texto
                 console.warn(`⚠️  Imagen fallida (${imgErr.message}), enviando solo texto...`);
                 await client.sendMessage(chatId, message);
                 console.log(`✅ [texto] → "${realName}"`);

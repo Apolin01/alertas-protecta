@@ -10,3 +10,5 @@ whatsapp_bridge/.wwebjs_cache/
 whatsapp_bridge/node_modules/
 start_alertas.bat
 BD_Matriz.xlsx
+cookies.txt
+fb_session/

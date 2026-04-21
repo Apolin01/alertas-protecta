@@ -48,33 +48,38 @@ def now_peru() -> datetime:
 
 
 # ─────────────────────────────────────────────────────────────
-# ENVIO INMEDIATO
+# FLUSH — envía todas las alertas encoladas al terminar la region
 # ─────────────────────────────────────────────────────────────
-def send_now(group: str, wa_msg: str, image_url: str,
-             alert: dict, queue: AlertQueue,
-             wa_sender: WhatsAppSender, dedup: Deduplicator):
-    """Encola y envía una alerta al instante."""
-    queue.push(group, wa_msg, image_url, alert)
+def flush_all_pending(queued_ids: list[int], queue: AlertQueue,
+                      wa_sender: WhatsAppSender, dedup: Deduplicator):
+    """Envía solo las alertas encoladas en el ciclo actual (por ID)."""
+    if not queued_ids:
+        return
 
-    pending = queue.get_pending(group)
+    groups = queue.get_pending_by_ids(queued_ids)
+    if not groups:
+        return
+
     hora_str = now_peru().strftime("%H:%M")
-    log.info(f"[ENVIO] {hora_str} PE → '{group}'")
+    log.info(f"[FLUSH] {hora_str} — {len(queued_ids)} alerta(s) para {len(groups)} grupo(s)...")
 
-    for item in pending:
-        with _send_lock:
-            ok = wa_sender.send(
-                group,
-                item["message"],
-                image_url=item.get("image_url", "")
-            )
-        if ok:
-            queue.mark_sent(item["id"])
-            try:
-                _alert_data = json.loads(item.get("alert_json", "{}"))
-                dedup.mark_alert_sent(_alert_data)
-            except Exception:
-                pass
-        time.sleep(1)
+    for group, pending in groups.items():
+        log.info(f"[FLUSH] '{group}': {len(pending)} alerta(s)")
+        for item in pending:
+            with _send_lock:
+                ok = wa_sender.send(
+                    group,
+                    item["message"],
+                    image_url=item.get("image_url", "")
+                )
+            if ok:
+                queue.mark_sent(item["id"])
+                try:
+                    _alert_data = json.loads(item.get("alert_json", "{}"))
+                    dedup.mark_alert_sent(_alert_data)
+                except Exception:
+                    pass
+            time.sleep(1)
 
     queue.cleanup_old(days=2)
 
@@ -83,7 +88,7 @@ def send_now(group: str, wa_msg: str, image_url: str,
 # PROCESAR UNA PAGINA
 # ─────────────────────────────────────────────────────────────
 def process_page(page_name, config, classifier, dedup,
-                 formatter, router, queue, sh_sender, wa_sender) -> int:
+                 formatter, router, queue, sh_sender) -> list[int]:
     """
     Procesa una pagina completa.
     Retorna el numero de alertas enviadas (0 = sin noticias utiles).
@@ -96,10 +101,10 @@ def process_page(page_name, config, classifier, dedup,
         return 0
 
     if not posts:
-        return 0
+        return []
 
     log.info(f"[{page_name}] {len(posts)} posts")
-    alertas_enviadas = 0
+    queued_ids = []
 
     for post in posts:
         with _dedup_lock:
@@ -155,15 +160,15 @@ def process_page(page_name, config, classifier, dedup,
             continue
 
         for group in groups:
-            send_now(group, wa_msg, image_url, alert, queue, wa_sender, dedup)
-            alertas_enviadas += 1
-            log.info(f"[{page_name}] Enviado → '{group}'")
+            new_id = queue.push(group, wa_msg, image_url, alert)
+            queued_ids.append(new_id)
+            log.info(f"[{page_name}] Encolado → '{group}'")
 
         if getattr(config, "SHEETS_ENABLED", False):
             sheets_row = formatter.format_sheets_row(alert, post, config)
             sh_sender.append_row(sheets_row)
 
-    return alertas_enviadas
+    return queued_ids
 
 
 # ─────────────────────────────────────────────────────────────
@@ -181,19 +186,18 @@ def get_pages_for_region(region: str, config: Config) -> list[str]:
 
 
 # ─────────────────────────────────────────────────────────────
-# PROCESAR UNA REGION (N paginas antes de rotar)
+# PROCESAR UNA REGION (N paginas, luego flush)
 # ─────────────────────────────────────────────────────────────
 def process_region(region: str, config, classifier, dedup,
                    formatter, router, queue, sh_sender, wa_sender,
                    pages_limit: int = None) -> int:
     """
-    Procesa las paginas de una region.
-    Si lleva MAX_EMPTY_PAGES_BEFORE_ROTATE paginas sin alertas, rota.
-    Retorna total de alertas enviadas.
+    Procesa todas las paginas de una region, las encola,
+    y al terminar envia todas las alertas acumuladas.
+    Retorna total de alertas encoladas.
     """
     pages       = get_pages_for_region(region, config)
     limit       = pages_limit or getattr(config, "PAGES_PER_REGION_TURN", 8)
-    max_empty   = getattr(config, "MAX_EMPTY_PAGES_BEFORE_ROTATE", 5)
     pages_slice = pages[:limit]
 
     if not pages_slice:
@@ -204,35 +208,21 @@ def process_region(region: str, config, classifier, dedup,
     log.info(f"REGION: {region} — {len(pages_slice)}/{len(pages)} paginas")
     log.info(f"{'─'*50}")
 
-    total_alertas = 0
-    empty_streak  = 0   # paginas seguidas sin alertas
+    all_ids: list[int] = []
 
     for i, page in enumerate(pages_slice, 1):
         log.info(f"  [{i}/{len(pages_slice)}] {page}")
 
-        sent = process_page(
+        ids = process_page(
             page, config, classifier, dedup,
-            formatter, router, queue, sh_sender, wa_sender
+            formatter, router, queue, sh_sender
         )
-        total_alertas += sent
-
-        if sent == 0:
-            empty_streak += 1
-        else:
-            empty_streak = 0   # resetear si hubo alertas
-
-        # Rotar si lleva demasiadas paginas sin noticias
-        if empty_streak >= max_empty and i < len(pages_slice):
-            log.info(
-                f"  [{region}] {empty_streak} paginas sin noticias — "
-                f"rotando a siguiente region."
-            )
-            break
-
+        all_ids.extend(ids)
         time.sleep(config.DELAY_BETWEEN_PAGES)
 
-    log.info(f"[{region}] Total alertas: {total_alertas}")
-    return total_alertas
+    log.info(f"[{region}] Alertas encoladas: {len(all_ids)} — enviando...")
+    flush_all_pending(all_ids, queue, wa_sender, dedup)
+    return len(all_ids)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -242,10 +232,11 @@ def run_forever():
     config     = Config()
     classifier = AlertClassifier(config)
     dedup      = Deduplicator()
+    queue      = AlertQueue()
+    queue.clear_pending()  # limpiar alertas antiguas de ejecuciones anteriores
     formatter  = AlertFormatter()
     router     = RegionRouter(config)
     sh_sender  = SheetsSender(config)
-    queue      = AlertQueue()
     wa_sender  = WhatsAppSender(config)
 
     regions    = config.REGION_ROTATION

@@ -29,8 +29,21 @@ class Deduplicator:
         self.conn = _get_conn()
         self._init_db()
 
+    def _cursor(self):
+        """Retorna cursor reconectando si la conexión cayó."""
+        try:
+            self.conn.cursor().execute("SELECT 1")
+        except Exception:
+            log.warning("[Dedup] Reconectando a PostgreSQL...")
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            self.conn = _get_conn()
+        return self.conn.cursor()
+
     def _init_db(self):
-        cur = self.conn.cursor()
+        cur = self._cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS processed (
                 hash      TEXT PRIMARY KEY,
@@ -73,14 +86,14 @@ class Deduplicator:
     # ─────────────────────────────────────────────
     def already_processed(self, post: dict) -> bool:
         h = self._url_hash(post)
-        cur = self.conn.cursor()
+        cur = self._cursor()
         cur.execute("SELECT 1 FROM processed WHERE hash = %s", (h,))
         return cur.fetchone() is not None
 
     def mark_processed(self, post: dict):
         h = self._url_hash(post)
         try:
-            cur = self.conn.cursor()
+            cur = self._cursor()
             cur.execute(
                 "INSERT INTO processed (hash, url, seen_at) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
                 (h, post.get("url", ""), datetime.now().isoformat())
@@ -100,7 +113,7 @@ class Deduplicator:
         """
         ch = self._content_hash(alert)
         cutoff = (datetime.now() - timedelta(hours=window_hours)).isoformat()
-        cur = self.conn.cursor()
+        cur = self._cursor()
         cur.execute(
             "SELECT 1 FROM sent_alerts WHERE content_hash = %s AND sent_at > %s",
             (ch, cutoff)
@@ -111,7 +124,7 @@ class Deduplicator:
         """Registra una alerta como enviada para dedup de contenido."""
         ch = self._content_hash(alert)
         try:
-            cur = self.conn.cursor()
+            cur = self._cursor()
             cur.execute(
                 """INSERT INTO sent_alerts
                    (content_hash, departamento, subcategoria, cliente, resumen, sent_at)
@@ -137,7 +150,7 @@ class Deduplicator:
     def _cleanup_old(self):
         cutoff = (datetime.now() - timedelta(days=7)).isoformat()
         cutoff_alerts = (datetime.now() - timedelta(hours=12)).isoformat()
-        cur = self.conn.cursor()
+        cur = self._cursor()
         cur.execute("DELETE FROM processed WHERE seen_at < %s", (cutoff,))
         cur.execute("DELETE FROM sent_alerts WHERE sent_at < %s", (cutoff_alerts,))
         self.conn.commit()
