@@ -38,10 +38,13 @@ const GROUP_MAP = {
 // ─────────────────────────────────────────────
 // CLIENTE WHATSAPP
 // ─────────────────────────────────────────────
+// WA_DATA_PATH debe apuntar al mount path del volumen en Railway (ej: /data)
+const DATA_PATH = process.env.WA_DATA_PATH || "/data";
+
 const client = new Client({
     authStrategy: new LocalAuth({
         clientId: "railway",
-        dataPath: "/tmp/.wwebjs_auth"
+        dataPath: DATA_PATH
     }),
     puppeteer: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
