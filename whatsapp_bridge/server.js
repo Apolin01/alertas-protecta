@@ -38,8 +38,8 @@ const GROUP_MAP = {
 // ─────────────────────────────────────────────
 // CLIENTE WHATSAPP
 // ─────────────────────────────────────────────
-// WA_DATA_PATH debe apuntar al mount path del volumen en Railway (ej: /data)
-const DATA_PATH = process.env.WA_DATA_PATH || "/data";
+// Volumen Railway montado en /app/.wwebjs_auth — LocalAuth crea esa carpeta bajo dataPath
+const DATA_PATH = process.env.WA_DATA_PATH || "/app";
 
 const client = new Client({
     authStrategy: new LocalAuth({
