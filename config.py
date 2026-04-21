@@ -42,7 +42,7 @@ class Config:
     # Pausa entre ciclos completos (segundos)
     # Despues de leer las 239 paginas, espera antes de volver a empezar
     # 1800 = 30 minutos entre ciclos completos
-    DELAY_BETWEEN_CYCLES = 3600  # pausa entre ciclos completos (1 hora)
+    DELAY_BETWEEN_CYCLES = 300   # pausa entre ciclos completos (5 min)
 
     # Paginas leidas por ciclo (rotacion para ahorrar credito Apify)
     # 239 paginas / 25 por ciclo = ~10 grupos → cada pagina se lee cada 5h
