@@ -208,9 +208,7 @@ class FacebookScraper:
 
     def _fetch_posts_sync(self, page_name: str) -> list[dict]:
         """Corre DENTRO del hilo _worker — puede usar Playwright libremente."""
-        peru_tz    = timezone(timedelta(hours=-5))
-        today_peru = datetime.now(peru_tz).replace(hour=0, minute=0, second=0, microsecond=0)
-        cutoff     = today_peru.astimezone(timezone.utc)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
         ctx        = _get_context()
         pw_page    = ctx.new_page()
         results    = []
