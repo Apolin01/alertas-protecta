@@ -20,33 +20,50 @@ _pw  = None
 _ctx = None
 
 
-def _load_cookies_txt(path: str) -> list[dict]:
-    """Convierte cookies.txt (formato Netscape) al formato de Playwright."""
+def _parse_cookies_txt(content: str) -> list[dict]:
+    """Convierte contenido de cookies.txt (formato Netscape) al formato de Playwright."""
     cookies = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) < 7:
+            continue
+        domain, _, path_c, secure, expires, name, value = parts[:7]
+        cookies.append({
+            "name":     name,
+            "value":    value,
+            "domain":   domain,
+            "path":     path_c,
+            "expires":  int(expires) if expires.isdigit() else -1,
+            "httpOnly": False,
+            "secure":   secure.upper() == "TRUE",
+            "sameSite": "None",
+        })
+    return cookies
+
+
+def _load_cookies_txt(path: str) -> list[dict]:
+    """Carga cookies desde archivo .txt o desde variable de entorno FB_COOKIES."""
+    # Prioridad 1: variable de entorno (para Railway/producción)
+    env_cookies = os.environ.get("FB_COOKIES", "")
+    if env_cookies:
+        cookies = _parse_cookies_txt(env_cookies)
+        if cookies:
+            log.info(f"[Scraper] {len(cookies)} cookies cargadas desde variable FB_COOKIES")
+            return cookies
+
+    # Prioridad 2: archivo local
     try:
         with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split("\t")
-                if len(parts) < 7:
-                    continue
-                domain, _, path_c, secure, expires, name, value = parts[:7]
-                cookies.append({
-                    "name":     name,
-                    "value":    value,
-                    "domain":   domain,
-                    "path":     path_c,
-                    "expires":  int(expires) if expires.isdigit() else -1,
-                    "httpOnly": False,
-                    "secure":   secure.upper() == "TRUE",
-                    "sameSite": "None",
-                })
+            content = f.read()
+        cookies = _parse_cookies_txt(content)
         log.info(f"[Scraper] {len(cookies)} cookies cargadas desde {path}")
+        return cookies
     except Exception as e:
         log.warning(f"[Scraper] No se pudo leer cookies.txt: {e}")
-    return cookies
+    return []
 
 
 def _get_context():

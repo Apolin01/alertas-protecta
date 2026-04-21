@@ -98,7 +98,7 @@ def process_page(page_name, config, classifier, dedup,
         posts = scraper._fetch_posts(page_name)
     except Exception as e:
         log.error(f"[{page_name}] Error scraping: {e}")
-        return 0
+        return []
 
     if not posts:
         return []
