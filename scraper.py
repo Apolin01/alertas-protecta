@@ -2,11 +2,17 @@
 scraper.py — Scraping de Facebook con Playwright (navegador real).
 Primera vez: ejecutar `python login_fb.py` para guardar la sesión.
 Después: corre solo sin pedir login.
+
+Playwright sync API no puede correr dentro de un asyncio loop (Railway).
+Solución: todo el código de Playwright corre en un hilo dedicado (_Worker)
+que nunca tiene un event loop de asyncio.
 """
 
 import os
 import re
 import logging
+import threading
+import queue as _queue
 from datetime import datetime, timedelta, timezone
 from playwright.sync_api import sync_playwright
 from config import Config
@@ -15,7 +21,45 @@ log = logging.getLogger(__name__)
 
 SESSION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fb_session")
 
-# Browser singleton — se lanza una vez y se reutiliza entre páginas
+
+# ── Worker thread dedicado para Playwright ────────────────────
+# Playwright sync API lanza error si hay un asyncio loop activo.
+# Este hilo no tiene loop, así que sync Playwright funciona bien.
+
+class _Worker:
+    def __init__(self):
+        self._q = _queue.Queue()
+        t = threading.Thread(target=self._loop, daemon=True, name="pw-worker")
+        t.start()
+
+    def _loop(self):
+        while True:
+            item = self._q.get()
+            if item is None:
+                break
+            rq, fn = item
+            try:
+                rq.put(("ok", fn()))
+            except Exception as e:
+                rq.put(("err", e))
+
+    def run(self, fn):
+        """Ejecuta fn() en el hilo de Playwright y retorna el resultado."""
+        rq = _queue.Queue()
+        self._q.put((rq, fn))
+        status, val = rq.get()
+        if status == "err":
+            raise val
+        return val
+
+    def stop(self):
+        self._q.put(None)
+
+
+_worker = _Worker()
+
+
+# ── Browser singleton (vive en el hilo _worker) ───────────────
 _pw  = None
 _ctx = None
 
@@ -46,15 +90,13 @@ def _parse_cookies_txt(content: str) -> list[dict]:
 
 def _load_cookies_txt(path: str) -> list[dict]:
     """Carga cookies desde archivo .txt o desde variable de entorno FB_COOKIES."""
-    # Prioridad 1: variable de entorno (para Railway/producción)
     env_cookies = os.environ.get("FB_COOKIES", "")
     if env_cookies:
         cookies = _parse_cookies_txt(env_cookies)
         if cookies:
-            log.info(f"[Scraper] {len(cookies)} cookies cargadas desde variable FB_COOKIES")
+            log.info(f"[Scraper] {len(cookies)} cookies cargadas desde FB_COOKIES")
             return cookies
 
-    # Prioridad 2: archivo local
     try:
         with open(path, encoding="utf-8") as f:
             content = f.read()
@@ -67,6 +109,7 @@ def _load_cookies_txt(path: str) -> list[dict]:
 
 
 def _get_context():
+    """Debe llamarse SOLO desde el hilo _worker."""
     global _pw, _ctx
     if _ctx is None:
         log.info("[Scraper] Iniciando browser...")
@@ -88,40 +131,45 @@ def _get_context():
             locale="es-PE",
         )
 
-        # Cargar cookies de Facebook si existen
         cookies_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
         if os.path.isfile(cookies_file):
             cookies = _load_cookies_txt(cookies_file)
             if cookies:
                 _ctx.add_cookies(cookies)
                 log.info("[Scraper] Cookies de Facebook cargadas en el browser.")
+        elif os.environ.get("FB_COOKIES"):
+            cookies = _load_cookies_txt("")
+            if cookies:
+                _ctx.add_cookies(cookies)
+                log.info("[Scraper] Cookies de Facebook cargadas desde env.")
         else:
-            log.warning("[Scraper] No se encontró cookies.txt — puede fallar el login.")
+            log.warning("[Scraper] No se encontró cookies.txt ni FB_COOKIES.")
 
         log.info("[Scraper] Browser listo.")
     return _ctx
 
 
 def close_browser():
-    global _pw, _ctx
-    if _ctx:
-        try:
-            _ctx.close()
-        except Exception:
-            pass
-        _ctx = None
-    if _pw:
-        try:
-            _pw.stop()
-        except Exception:
-            pass
-        _pw = None
+    def _close():
+        global _pw, _ctx
+        if _ctx:
+            try:
+                _ctx.close()
+            except Exception:
+                pass
+            _ctx = None
+        if _pw:
+            try:
+                _pw.stop()
+            except Exception:
+                pass
+            _pw = None
 
+    _worker.run(_close)
 
 
 def _relative_to_iso(time_text: str) -> str:
     """Convierte '4 h', '2 d', '30 min' a ISO timestamp aproximado."""
-    from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone.utc)
     t   = time_text.strip().lower()
     try:
@@ -155,7 +203,11 @@ class FacebookScraper:
         return all_posts
 
     def _fetch_posts(self, page_name: str) -> list[dict]:
-        # Solo posts de hoy (desde medianoche hora Perú UTC-5)
+        """Despacha el scraping al hilo de Playwright y retorna los posts."""
+        return _worker.run(lambda: self._fetch_posts_sync(page_name))
+
+    def _fetch_posts_sync(self, page_name: str) -> list[dict]:
+        """Corre DENTRO del hilo _worker — puede usar Playwright libremente."""
         peru_tz    = timezone(timedelta(hours=-5))
         today_peru = datetime.now(peru_tz).replace(hour=0, minute=0, second=0, microsecond=0)
         cutoff     = today_peru.astimezone(timezone.utc)
@@ -180,7 +232,6 @@ class FacebookScraper:
                 log.warning(f"[{page_name}] Sin posts visibles.")
                 return []
 
-            # Scroll inicial para activar el feed
             pw_page.evaluate("window.scrollBy(0, 500)")
             pw_page.wait_for_timeout(2000)
 
@@ -188,7 +239,6 @@ class FacebookScraper:
 
             for article in articles[:self.config.POSTS_PER_PAGE + 2]:
                 try:
-                    # Buscar link de tiempo relativo ("4 h", "2 d", "30 min")
                     time_link = None
                     time_text = ""
                     post_url  = ""
@@ -204,7 +254,6 @@ class FacebookScraper:
                     if not time_link:
                         continue
 
-                    # Texto del post
                     text = ""
                     for el in article.locator('[dir="auto"]').all():
                         t = (el.inner_text() or "").strip()
@@ -214,19 +263,16 @@ class FacebookScraper:
                     if not text:
                         continue
 
-                    # Scrollear el artículo para disparar lazy load de imagen
                     article.scroll_into_view_if_needed()
                     pw_page.wait_for_timeout(1500)
 
-                    # Extraer imagen real (ignorar SVG placeholders)
                     image_b64 = ""
                     for img in article.locator("img").all():
                         src = img.get_attribute("src") or ""
                         if "fbcdn.net" in src and not src.startswith("data:"):
-                            image_b64 = self._download_image_b64(src)
+                            image_b64 = self._download_image_b64_sync(src)
                             break
 
-                    # Fecha aproximada desde tiempo relativo
                     date = _relative_to_iso(time_text)
                     try:
                         pt = datetime.fromisoformat(date)
@@ -237,7 +283,6 @@ class FacebookScraper:
                     except Exception:
                         pass
 
-                    # Post ID desde URL
                     post_id = ""
                     m = re.search(r"/(\d{10,})/", post_url)
                     if m:
@@ -266,11 +311,11 @@ class FacebookScraper:
         return results
 
     def _download_image_b64(self, image_url: str) -> str:
-        """
-        Descarga la imagen usando la sesión activa del browser (con cookies)
-        y retorna base64. Así el bridge puede enviarla aunque sea privada.
-        Formato: 'data:image/jpeg;base64,<datos>'
-        """
+        """Descarga imagen desde el hilo principal (despacha al worker)."""
+        return _worker.run(lambda: self._download_image_b64_sync(image_url))
+
+    def _download_image_b64_sync(self, image_url: str) -> str:
+        """Descarga imagen dentro del hilo _worker usando la sesión activa."""
         if not image_url or not image_url.startswith("http"):
             return ""
         try:
@@ -288,12 +333,7 @@ class FacebookScraper:
     def _normalize(self, raw: dict, source_page: str) -> dict:
         date      = raw.get("timestamp") or _relative_to_iso(raw.get("timeText", ""))
         image_url = raw.get("imageUrl", "")
-
-        # Descargar imagen como base64 para que el bridge pueda enviarla
-        if image_url:
-            image_b64 = self._download_image_b64(image_url)
-        else:
-            image_b64 = ""
+        image_b64 = self._download_image_b64(image_url) if image_url else ""
 
         return {
             "id":          raw.get("postId", ""),
