@@ -131,7 +131,10 @@ def process_page(page_name, config, classifier, dedup,
 
         nivel = alert.get("nivel", "IGNORAR")
         if nivel == "IGNORAR":
-            log.info(f"[{page_name}] IGNORAR — {alert.get('subcategoria', 'sin categoria')}")
+            log.info(
+                f"[{page_name}] IGNORAR — dept={alert.get('departamento','?')} "
+                f"cliente={alert.get('cliente','?')} sub={alert.get('subcategoria','?')}"
+            )
             continue
 
         # Dedup de contenido — misma noticia de otra pagina

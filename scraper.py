@@ -257,7 +257,7 @@ class FacebookScraper:
                     text = ""
                     for el in article.locator('[dir="auto"]').all()[:8]:
                         t = (el.inner_text() or "").strip()
-                        if 50 < len(t) < 5000:
+                        if 25 < len(t) < 5000:
                             text = t
                             break
 
