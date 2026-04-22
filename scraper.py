@@ -115,10 +115,13 @@ def _mark_session_expired():
     global _session_expired
     if not _session_expired:
         _session_expired = True
-        log.warning(
-            "[Scraper] Sesión FB expirada → modo anónimo "
-            "(páginas públicas siguen funcionando sin login)"
-        )
+        log.warning("[Scraper] Sesión FB expirada → limpiando cookies para modo anónimo real")
+        if _ctx:
+            try:
+                _ctx.clear_cookies()
+                log.info("[Scraper] Cookies limpiadas — próximas páginas como visitante anónimo")
+            except Exception as e:
+                log.debug(f"[Scraper] Error limpiando cookies: {e}")
 
 
 def is_session_expired() -> bool:
