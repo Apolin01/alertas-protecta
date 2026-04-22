@@ -121,9 +121,66 @@ def _mark_session_expired():
         )
 
 
+def _do_login(ctx) -> bool:
+    """Intenta login con FB_EMAIL/FB_PASSWORD desde dentro del worker thread."""
+    email    = os.environ.get("FB_EMAIL", "")
+    password = os.environ.get("FB_PASSWORD", "")
+    if not email or not password:
+        log.warning("[Scraper] Sin FB_EMAIL/FB_PASSWORD — no se puede hacer login automático.")
+        return False
+
+    log.info("[Scraper] Intentando login automático (cuenta dedicada)...")
+    page = ctx.new_page()
+    try:
+        page.goto("https://m.facebook.com/login", wait_until="domcontentloaded", timeout=25000)
+        page.wait_for_load_state("networkidle", timeout=10000)
+
+        # Intentar varios selectores para el email
+        filled = False
+        for sel in ['input[name="email"]', '#email', 'input[type="email"]']:
+            try:
+                page.fill(sel, email, timeout=8000)
+                filled = True
+                break
+            except Exception:
+                continue
+
+        if not filled:
+            log.error("[Scraper] No se encontró el campo email en la página de login.")
+            return False
+
+        for sel in ['input[name="pass"]', '#pass', 'input[type="password"]']:
+            try:
+                page.fill(sel, password, timeout=8000)
+                break
+            except Exception:
+                continue
+
+        for sel in ['button[name="login"]', 'button[type="submit"]', 'input[type="submit"]']:
+            try:
+                page.click(sel, timeout=8000)
+                break
+            except Exception:
+                continue
+
+        page.wait_for_timeout(6000)
+
+        if "login" in page.url or "checkpoint" in page.url:
+            log.error("[Scraper] Login fallido — Facebook bloqueó o requiere verificación.")
+            return False
+
+        log.info("[Scraper] ✓ Login automático exitoso — sesión guardada en volumen.")
+        return True
+    except Exception as e:
+        log.error(f"[Scraper] Error en login: {e}")
+        return False
+    finally:
+        page.close()
+
+
 def _get_context():
     """Debe llamarse SOLO desde el hilo _worker."""
-    global _pw, _ctx
+    global _pw, _ctx, _session_expired
     if _ctx is None:
         log.info("[Scraper] Iniciando browser...")
         _pw  = sync_playwright().start()
@@ -144,20 +201,34 @@ def _get_context():
             locale="es-PE",
         )
 
+        # Cargar cookies si hay (para sesiones previas o desde env)
         cookies_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
         if os.path.isfile(cookies_file):
             cookies = _load_cookies_txt(cookies_file)
             if cookies:
                 _ctx.add_cookies(cookies)
-                log.info("[Scraper] Cookies de Facebook cargadas en el browser.")
         elif os.environ.get("FB_COOKIES"):
             cookies = _load_cookies_txt("")
             if cookies:
                 _ctx.add_cookies(cookies)
-                log.info("[Scraper] Cookies de Facebook cargadas desde env.")
-        else:
-            log.warning("[Scraper] No se encontró cookies.txt ni FB_COOKIES.")
 
+        # Verificar si hay sesión válida; si no, intentar login automático
+        test = _ctx.new_page()
+        try:
+            test.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=20000)
+            test.wait_for_timeout(2000)
+            if "login" in test.url or "checkpoint" in test.url:
+                log.warning("[Scraper] Sin sesión válida — intentando login automático...")
+                test.close()
+                if not _do_login(_ctx):
+                    log.error("[Scraper] Login fallido. Configura FB_EMAIL+FB_PASSWORD en Railway Variables.")
+            else:
+                log.info("[Scraper] Sesión de Facebook válida.")
+                test.close()
+        except Exception:
+            test.close()
+
+        _session_expired = False
         log.info("[Scraper] Browser listo.")
     return _ctx
 
