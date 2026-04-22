@@ -190,25 +190,27 @@ def get_pages_for_region(region: str, config: Config) -> list[str]:
 
 
 # ─────────────────────────────────────────────────────────────
-# PROCESAR UNA REGION
+# PROCESAR UNA REGION (con offset rotativo)
 # ─────────────────────────────────────────────────────────────
 def process_region(region: str, config, classifier, dedup,
                    formatter, router, queue, sh_sender, wa_sender,
-                   pages_limit: int = None) -> int:
-    pages       = get_pages_for_region(region, config)
-    limit       = pages_limit or getattr(config, "PAGES_PER_REGION_TURN", 8)
-    pages_slice = pages[:limit]
+                   offset: int = 0) -> int:
+    pages  = get_pages_for_region(region, config)
+    limit  = getattr(config, "PAGES_PER_REGION_TURN", 8)
+    total  = len(pages)
 
-    if not pages_slice:
+    if not total:
         log.debug(f"[{region}] Sin paginas configuradas.")
         return 0
 
+    start       = offset % total
+    pages_slice = (pages + pages)[start : start + limit]   # wrap-around
+
     log.info(f"\n{'─'*50}")
-    log.info(f"REGION: {region} — {len(pages_slice)}/{len(pages)} paginas")
+    log.info(f"REGION: {region} — págs {start+1}-{start+len(pages_slice)}/{total}")
     log.info(f"{'─'*50}")
 
     total_enviadas = 0
-
     for i, page in enumerate(pages_slice, 1):
         log.info(f"  [{i}/{len(pages_slice)}] {page}")
         enviadas = process_page(
@@ -246,7 +248,10 @@ def run_forever():
     log.info(f"Paginas por region por turno: {config.PAGES_PER_REGION_TURN}")
     log.info("=" * 60)
 
-    ciclo = 0
+    ciclo   = 0
+    offsets = {r: 0 for r in regions}   # offset rotativo por región
+    limit   = getattr(config, "PAGES_PER_REGION_TURN", 8)
+
     while True:
         ciclo += 1
         log.info(
@@ -259,9 +264,11 @@ def run_forever():
         for region in regions:
             enviadas = process_region(
                 region, config, classifier, dedup,
-                formatter, router, queue, sh_sender, wa_sender
+                formatter, router, queue, sh_sender, wa_sender,
+                offset=offsets[region]
             )
             ciclo_alertas += enviadas
+            offsets[region] += limit   # avanzar al siguiente bloque
 
         sesion_status = "⚠ SESION EXPIRADA" if is_session_expired() else "OK"
         log.info(
