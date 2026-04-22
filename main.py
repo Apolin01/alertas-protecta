@@ -135,9 +135,12 @@ def process_page(page_name, config, classifier, dedup,
             )
             continue
 
-        # Dedup DESACTIVADO temporalmente para pruebas
-        # if dedup.is_duplicate_alert(alert):
-        #     continue
+        if dedup.is_duplicate_alert(alert):
+            log.info(
+                f"[{page_name}] DUPLICADO — ya enviado: "
+                f"dept={alert.get('departamento','?')} sub={alert.get('subcategoria','?')}"
+            )
+            continue
 
         cliente = alert.get("cliente", "")
         groups  = router.get_whatsapp_groups(cliente)
