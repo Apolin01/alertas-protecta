@@ -104,14 +104,17 @@ def process_page(page_name, config, classifier, dedup,
     if not posts:
         return 0
 
-    log.info(f"[{page_name}] {len(posts)} posts encontrados")
+    log.info(f"[{page_name}] {len(posts)} posts scrapeados")
     queued_ids = []
 
+    nuevos = 0
     for post in posts:
         with _dedup_lock:
             if dedup.already_processed(post):
+                log.info(f"[{page_name}] Dedup: ya visto — {(post.get('url') or post.get('text',''))[:60]}")
                 continue
             dedup.mark_processed(post)
+        nuevos += 1
 
         if post.get("is_video") and not post.get("text"):
             continue

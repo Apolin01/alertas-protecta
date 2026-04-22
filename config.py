@@ -573,7 +573,7 @@ class Config:
         "ONAMIAP.pe",  # ONAMIAP
     ]
 
-    POSTS_PER_PAGE = 3
+    POSTS_PER_PAGE = 8
     WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "bridge")
 
   

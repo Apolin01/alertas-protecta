@@ -230,8 +230,10 @@ class FacebookScraper:
                 log.warning(f"[{page_name}] Sin posts visibles.")
                 return []
 
-            pw_page.evaluate("window.scrollBy(0, 500)")
-            pw_page.wait_for_timeout(2000)
+            # Scroll progresivo para cargar más posts del feed
+            for _ in range(3):
+                pw_page.evaluate("window.scrollBy(0, 800)")
+                pw_page.wait_for_timeout(1500)
 
             articles = pw_page.locator('[role="article"]').all()
 
