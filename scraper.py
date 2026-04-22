@@ -108,49 +108,17 @@ def _load_cookies_txt(path: str) -> list[dict]:
     return []
 
 
-_login_failed = False  # evitar reintentos infinitos si el login falla
+_session_expired = False  # bandera para no reintentar en el mismo ciclo
 
-def _auto_login(ctx):
-    """Login automático con FB_EMAIL y FB_PASSWORD. Llama solo desde _worker."""
-    global _login_failed
-    if _login_failed:
-        return False
 
-    email = os.environ.get("FB_EMAIL", "")
-    password = os.environ.get("FB_PASSWORD", "")
-    if not email or not password:
-        log.error("[Scraper] Sin sesión y sin FB_EMAIL/FB_PASSWORD.")
-        _login_failed = True
-        return False
-
-    log.info("[Scraper] Login automático via m.facebook.com...")
-    page = ctx.new_page()
-    try:
-        # Limpiar cookies inválidas antes de intentar login
-        ctx.clear_cookies()
-
-        # m.facebook.com tiene formulario simple sin overlays React
-        page.goto("https://m.facebook.com/login", wait_until="domcontentloaded", timeout=25000)
-        page.wait_for_timeout(2000)
-
-        page.locator('input[name="email"]').fill(email, timeout=15000)
-        page.locator('input[name="pass"]').fill(password, timeout=10000)
-        page.locator('button[name="login"]').click()
-        page.wait_for_timeout(6000)
-
-        if "login" in page.url or "checkpoint" in page.url:
-            log.error("[Scraper] Login fallido — Facebook requiere verificación o bloqueó el acceso.")
-            _login_failed = True
-            return False
-
-        log.info("[Scraper] Login automático exitoso.")
-        return True
-    except Exception as e:
-        log.error(f"[Scraper] Error en login automático: {e}")
-        _login_failed = True
-        return False
-    finally:
-        page.close()
+def _mark_session_expired():
+    global _session_expired
+    if not _session_expired:
+        _session_expired = True
+        log.error(
+            "[Scraper] Sesión de Facebook expirada. "
+            "Actualiza FB_COOKIES en Railway → Variables con cookies frescas de facebook.com"
+        )
 
 
 def _get_context():
@@ -267,19 +235,8 @@ class FacebookScraper:
 
             if "login" in pw_page.url or "checkpoint" in pw_page.url:
                 pw_page.close()
-                log.warning("[Scraper] Sesión expirada — intentando re-login automático...")
-                if _auto_login(_get_context()):
-                    pw_page = _get_context().new_page()
-                    pw_page.goto(
-                        f"https://www.facebook.com/{page_name}",
-                        wait_until="domcontentloaded",
-                        timeout=25000
-                    )
-                    if "login" in pw_page.url or "checkpoint" in pw_page.url:
-                        log.error("[Scraper] Re-login falló. Configura FB_EMAIL y FB_PASSWORD en Railway.")
-                        return []
-                else:
-                    return []
+                _mark_session_expired()
+                return []
 
             try:
                 pw_page.wait_for_selector('[role="article"]', timeout=15000)
