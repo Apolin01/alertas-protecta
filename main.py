@@ -16,7 +16,7 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-from scraper import FacebookScraper
+from scraper import FacebookScraper, is_session_expired
 from classifier import AlertClassifier
 from deduplicator import Deduplicator
 from formatter import AlertFormatter
@@ -101,6 +101,10 @@ def process_page(page_name, config, classifier, dedup,
         return 0
 
     if not posts:
+        if is_session_expired():
+            log.warning(f"[{page_name}] 0 posts — sesión FB expirada")
+        else:
+            log.info(f"[{page_name}] 0 posts encontrados")
         return 0
 
     log.info(f"[{page_name}] {len(posts)} posts scrapeados")
@@ -259,9 +263,10 @@ def run_forever():
             )
             ciclo_alertas += enviadas
 
+        sesion_status = "⚠ SESION EXPIRADA" if is_session_expired() else "OK"
         log.info(
             f"\nCiclo {ciclo} completo — "
-            f"Total alertas enviadas: {ciclo_alertas}\n"
+            f"Alertas enviadas: {ciclo_alertas} | Sesión FB: {sesion_status}\n"
             f"Esperando {config.DELAY_BETWEEN_CYCLES}s antes del siguiente ciclo...\n"
         )
         time.sleep(config.DELAY_BETWEEN_CYCLES)

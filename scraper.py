@@ -121,6 +121,10 @@ def _mark_session_expired():
         )
 
 
+def is_session_expired() -> bool:
+    return _session_expired
+
+
 def _do_login(ctx) -> bool:
     """Intenta login con FB_EMAIL/FB_PASSWORD desde dentro del worker thread."""
     email    = os.environ.get("FB_EMAIL", "")
@@ -292,6 +296,9 @@ class FacebookScraper:
 
     def _fetch_posts_sync(self, page_name: str) -> list[dict]:
         """Corre DENTRO del hilo _worker — puede usar Playwright libremente."""
+        if _session_expired:
+            log.warning(f"[{page_name}] SKIP — sesión FB expirada")
+            return []
         cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
         ctx        = _get_context()
         pw_page    = ctx.new_page()
