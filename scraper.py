@@ -254,14 +254,30 @@ class FacebookScraper:
                     if not time_link:
                         continue
 
-                    # Tomar el PRIMER elemento con texto sustancial
-                    # (el cuerpo del post aparece antes que los comentarios en el DOM)
-                    text = ""
-                    for el in article.locator('[dir="auto"]').all()[:8]:
-                        t = (el.inner_text() or "").strip()
-                        if 25 < len(t) < 5000:
-                            text = t
-                            break
+                    # Extraer texto del post excluyendo comentarios.
+                    # Los comentarios son [role="article"] anidados dentro del post.
+                    # Usamos JS para saltar cualquier [dir="auto"] dentro de un article hijo.
+                    text = pw_page.evaluate("""
+                        (article) => {
+                            const els = article.querySelectorAll('[dir="auto"]');
+                            for (const el of els) {
+                                let p = el.parentElement;
+                                let inComment = false;
+                                while (p && p !== article) {
+                                    if (p.getAttribute('role') === 'article') {
+                                        inComment = true;
+                                        break;
+                                    }
+                                    p = p.parentElement;
+                                }
+                                if (!inComment) {
+                                    const t = el.innerText.trim();
+                                    if (t.length > 25 && t.length < 5000) return t;
+                                }
+                            }
+                            return '';
+                        }
+                    """, article.element_handle())
 
                     if not text:
                         continue
