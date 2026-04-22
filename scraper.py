@@ -123,36 +123,23 @@ def _auto_login(ctx):
         _login_failed = True
         return False
 
-    log.info("[Scraper] Login automático con FB_EMAIL...")
+    log.info("[Scraper] Login automático via m.facebook.com...")
     page = ctx.new_page()
     try:
-        page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=25000)
-        page.wait_for_timeout(3000)
+        # Limpiar cookies inválidas antes de intentar login
+        ctx.clear_cookies()
 
-        # Aceptar cookies si aparece el diálogo
-        for btn_text in ["Allow all cookies", "Permitir todas las cookies",
-                         "Accept all", "Aceptar todo"]:
-            try:
-                btn = page.get_by_role("button", name=btn_text)
-                if btn.is_visible():
-                    btn.click()
-                    page.wait_for_timeout(1500)
-                    break
-            except Exception:
-                pass
-
-        # Ir al login
-        page.goto("https://www.facebook.com/login", wait_until="domcontentloaded", timeout=20000)
+        # m.facebook.com tiene formulario simple sin overlays React
+        page.goto("https://m.facebook.com/login", wait_until="domcontentloaded", timeout=25000)
         page.wait_for_timeout(2000)
 
-        # Llenar formulario
         page.locator('input[name="email"]').fill(email, timeout=15000)
-        page.locator('input[name="pass"]').fill(password)
+        page.locator('input[name="pass"]').fill(password, timeout=10000)
         page.locator('button[name="login"]').click()
         page.wait_for_timeout(6000)
 
         if "login" in page.url or "checkpoint" in page.url:
-            log.error("[Scraper] Login fallido — Facebook bloqueó o requiere verificación 2FA.")
+            log.error("[Scraper] Login fallido — Facebook requiere verificación o bloqueó el acceso.")
             _login_failed = True
             return False
 
