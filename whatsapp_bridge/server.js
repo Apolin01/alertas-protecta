@@ -90,7 +90,7 @@ client.on("ready", () => {
     isReady = true;
     qrImageBase64 = "";
     lastQrText = "";
-    console.log("WhatsApp listo. La cache de grupos se cargará bajo demanda.");
+    buildGroupCache().catch(err => console.error("Error cargando cache:", err.message));
 });
 
 client.on("disconnected", (reason) => {

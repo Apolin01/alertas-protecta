@@ -86,7 +86,7 @@ class WhatsAppSender:
                     "message":    message,
                     "image_url":  img_payload,
                 },
-                timeout=60
+                timeout=90
             )
 
             if resp.status_code == 200:
