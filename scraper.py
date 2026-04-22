@@ -108,6 +108,33 @@ def _load_cookies_txt(path: str) -> list[dict]:
     return []
 
 
+def _auto_login(ctx):
+    """Login automático con FB_EMAIL y FB_PASSWORD. Llama solo desde _worker."""
+    email = os.environ.get("FB_EMAIL", "")
+    password = os.environ.get("FB_PASSWORD", "")
+    if not email or not password:
+        log.error("[Scraper] Sin sesión y sin FB_EMAIL/FB_PASSWORD — no se puede re-login.")
+        return False
+    log.info("[Scraper] Intentando login automático con FB_EMAIL...")
+    page = ctx.new_page()
+    try:
+        page.goto("https://www.facebook.com/login", wait_until="domcontentloaded", timeout=20000)
+        page.fill('input[name="email"]', email)
+        page.fill('input[name="pass"]', password)
+        page.click('button[name="login"]')
+        page.wait_for_timeout(5000)
+        if "login" in page.url or "checkpoint" in page.url:
+            log.error("[Scraper] Login fallido — Facebook bloqueó o requiere verificación.")
+            return False
+        log.info("[Scraper] Login automático exitoso.")
+        return True
+    except Exception as e:
+        log.error(f"[Scraper] Error en login automático: {e}")
+        return False
+    finally:
+        page.close()
+
+
 def _get_context():
     """Debe llamarse SOLO desde el hilo _worker."""
     global _pw, _ctx
@@ -221,8 +248,20 @@ class FacebookScraper:
             )
 
             if "login" in pw_page.url or "checkpoint" in pw_page.url:
-                log.error("[Scraper] Sin sesión. Ejecuta: python login_fb.py")
-                return []
+                pw_page.close()
+                log.warning("[Scraper] Sesión expirada — intentando re-login automático...")
+                if _auto_login(_get_context()):
+                    pw_page = _get_context().new_page()
+                    pw_page.goto(
+                        f"https://www.facebook.com/{page_name}",
+                        wait_until="domcontentloaded",
+                        timeout=25000
+                    )
+                    if "login" in pw_page.url or "checkpoint" in pw_page.url:
+                        log.error("[Scraper] Re-login falló. Configura FB_EMAIL y FB_PASSWORD en Railway.")
+                        return []
+                else:
+                    return []
 
             try:
                 pw_page.wait_for_selector('[role="article"]', timeout=15000)
