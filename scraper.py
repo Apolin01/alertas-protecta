@@ -255,15 +255,15 @@ class FacebookScraper:
                         continue
 
                     # Extraer texto del post excluyendo comentarios.
-                    # Los comentarios son [role="article"] anidados dentro del post.
-                    # Usamos JS para saltar cualquier [dir="auto"] dentro de un article hijo.
-                    text = pw_page.evaluate("""
-                        (article) => {
-                            const els = article.querySelectorAll('[dir="auto"]');
+                    # Los comentarios son [role="article"] anidados; los saltamos con JS.
+                    # article.evaluate() pasa el nodo DOM directamente como primer argumento.
+                    text = article.evaluate("""
+                        node => {
+                            const els = node.querySelectorAll('[dir="auto"]');
                             for (const el of els) {
                                 let p = el.parentElement;
                                 let inComment = false;
-                                while (p && p !== article) {
+                                while (p && p !== node) {
                                     if (p.getAttribute('role') === 'article') {
                                         inComment = true;
                                         break;
@@ -271,13 +271,13 @@ class FacebookScraper:
                                     p = p.parentElement;
                                 }
                                 if (!inComment) {
-                                    const t = el.innerText.trim();
+                                    const t = (el.innerText || '').trim();
                                     if (t.length > 25 && t.length < 5000) return t;
                                 }
                             }
                             return '';
                         }
-                    """, article.element_handle())
+                    """)
 
                     if not text:
                         continue
