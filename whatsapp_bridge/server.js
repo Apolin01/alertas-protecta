@@ -49,6 +49,7 @@ const client = new Client({
     puppeteer: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         headless: true,
+        protocolTimeout: 120000,
         args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -90,7 +91,14 @@ client.on("ready", () => {
     isReady = true;
     qrImageBase64 = "";
     lastQrText = "";
-    buildGroupCache().catch(err => console.error("Error cargando cache:", err.message));
+    // Esperar 5s para que WhatsApp termine de sincronizar antes de cargar grupos
+    setTimeout(() => {
+        buildGroupCache().catch(err => {
+            console.error("Error cargando cache inicial:", err.message);
+            // Reintentar después de 30s
+            setTimeout(() => buildGroupCache().catch(e => console.error("Reintento fallido:", e.message)), 30000);
+        });
+    }, 5000);
 });
 
 client.on("disconnected", (reason) => {
