@@ -108,28 +108,59 @@ def _load_cookies_txt(path: str) -> list[dict]:
     return []
 
 
+_login_failed = False  # evitar reintentos infinitos si el login falla
+
 def _auto_login(ctx):
     """Login automático con FB_EMAIL y FB_PASSWORD. Llama solo desde _worker."""
+    global _login_failed
+    if _login_failed:
+        return False
+
     email = os.environ.get("FB_EMAIL", "")
     password = os.environ.get("FB_PASSWORD", "")
     if not email or not password:
-        log.error("[Scraper] Sin sesión y sin FB_EMAIL/FB_PASSWORD — no se puede re-login.")
+        log.error("[Scraper] Sin sesión y sin FB_EMAIL/FB_PASSWORD.")
+        _login_failed = True
         return False
-    log.info("[Scraper] Intentando login automático con FB_EMAIL...")
+
+    log.info("[Scraper] Login automático con FB_EMAIL...")
     page = ctx.new_page()
     try:
+        page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=25000)
+        page.wait_for_timeout(3000)
+
+        # Aceptar cookies si aparece el diálogo
+        for btn_text in ["Allow all cookies", "Permitir todas las cookies",
+                         "Accept all", "Aceptar todo"]:
+            try:
+                btn = page.get_by_role("button", name=btn_text)
+                if btn.is_visible():
+                    btn.click()
+                    page.wait_for_timeout(1500)
+                    break
+            except Exception:
+                pass
+
+        # Ir al login
         page.goto("https://www.facebook.com/login", wait_until="domcontentloaded", timeout=20000)
-        page.fill('input[name="email"]', email)
-        page.fill('input[name="pass"]', password)
-        page.click('button[name="login"]')
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(2000)
+
+        # Llenar formulario
+        page.locator('input[name="email"]').fill(email, timeout=15000)
+        page.locator('input[name="pass"]').fill(password)
+        page.locator('button[name="login"]').click()
+        page.wait_for_timeout(6000)
+
         if "login" in page.url or "checkpoint" in page.url:
-            log.error("[Scraper] Login fallido — Facebook bloqueó o requiere verificación.")
+            log.error("[Scraper] Login fallido — Facebook bloqueó o requiere verificación 2FA.")
+            _login_failed = True
             return False
+
         log.info("[Scraper] Login automático exitoso.")
         return True
     except Exception as e:
         log.error(f"[Scraper] Error en login automático: {e}")
+        _login_failed = True
         return False
     finally:
         page.close()
