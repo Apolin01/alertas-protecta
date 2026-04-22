@@ -252,11 +252,14 @@ class FacebookScraper:
                     if not time_link:
                         continue
 
+                    # Tomar el PRIMER elemento con texto sustancial
+                    # (el cuerpo del post aparece antes que los comentarios en el DOM)
                     text = ""
-                    for el in article.locator('[dir="auto"]').all():
+                    for el in article.locator('[dir="auto"]').all()[:8]:
                         t = (el.inner_text() or "").strip()
-                        if len(t) > len(text) and len(t) < 5000:
+                        if 50 < len(t) < 5000:
                             text = t
+                            break
 
                     if not text:
                         continue
