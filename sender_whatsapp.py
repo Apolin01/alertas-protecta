@@ -71,6 +71,12 @@ class WhatsAppSender:
         bridge_url   = getattr(self.config, "BRIDGE_URL",   "http://localhost:3000")
         bridge_token = getattr(self.config, "BRIDGE_TOKEN", "protecta2026")
 
+        # Limitar imagen base64 a 400 KB para evitar timeouts
+        img_payload = image_url or ""
+        if img_payload.startswith("data:") and len(img_payload) > 400_000:
+            log.debug("Imagen base64 muy grande — se omite para no hacer timeout")
+            img_payload = ""
+
         try:
             resp = requests.post(
                 f"{bridge_url}/send",
@@ -78,9 +84,9 @@ class WhatsAppSender:
                 json={
                     "group_name": group_name,
                     "message":    message,
-                    "image_url":  image_url or "",
+                    "image_url":  img_payload,
                 },
-                timeout=20
+                timeout=60
             )
 
             if resp.status_code == 200:
