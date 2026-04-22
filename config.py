@@ -28,7 +28,7 @@ class Config:
     # Paginas que se procesan en paralelo simultaneamente
     MAX_WORKERS = 5
 
-    DELAY_BETWEEN_PAGES  = 15   # segundos entre lanzar cada run de Apify
+    DELAY_BETWEEN_PAGES  = 2    # segundos entre páginas (Playwright: carga natural ya toma ~10s)
 
     # Timeout por pagina: si Apify no responde en N segundos, pasar a la siguiente
     PAGE_TIMEOUT_SECONDS = 45
@@ -312,7 +312,7 @@ class Config:
     ]
 
     # Paginas por region por turno antes de rotar a la siguiente
-    PAGES_PER_REGION_TURN = 8
+    PAGES_PER_REGION_TURN = 500   # cubrir todas las páginas de cada región en un ciclo
 
     # ─────────────────────────────────────────────
     # FACEBOOK SCRAPING (Apify)
