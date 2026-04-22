@@ -337,12 +337,21 @@ class FacebookScraper:
                     post_url  = ""
 
                     for link in article.locator("a").all():
-                        txt = (link.inner_text() or "").strip()
+                        txt  = (link.inner_text() or "").strip()
+                        href = (link.get_attribute("href") or "")
+                        # Tiempo relativo (modo con sesión): "8 h", "30 min", "2 d"
                         if re.match(r"^\d+\s*(min|h|d|w|s)$", txt):
                             time_link = link
                             time_text = txt
-                            post_url  = (link.get_attribute("href") or "").split("?")[0]
+                            post_url  = href.split("?")[0]
                             break
+                        # Fallback modo anónimo: enlace directo a publicación
+                        if not time_link and re.search(
+                            r"/(posts|permalink|videos)/|story\.php|\?story_fbid=|/reel/", href
+                        ):
+                            time_link = link
+                            time_text = "1 h"   # asumir reciente
+                            post_url  = href.split("?")[0]
 
                     if not time_link:
                         continue
