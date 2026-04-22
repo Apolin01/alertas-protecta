@@ -254,28 +254,29 @@ class FacebookScraper:
                     if not time_link:
                         continue
 
-                    # Extraer texto del post excluyendo comentarios.
-                    # Los comentarios son [role="article"] anidados; los saltamos con JS.
-                    # article.evaluate() pasa el nodo DOM directamente como primer argumento.
+                    # El texto del post está más SUPERFICIAL en el DOM que los comentarios.
+                    # Tomamos el [dir="auto"] con menor profundidad que tenga texto sustancial.
+                    # Si hay empate de profundidad, tomamos el primero.
                     text = article.evaluate("""
                         node => {
-                            const els = node.querySelectorAll('[dir="auto"]');
-                            for (const el of els) {
-                                let p = el.parentElement;
-                                let inComment = false;
-                                while (p && p !== node) {
-                                    if (p.getAttribute('role') === 'article') {
-                                        inComment = true;
-                                        break;
-                                    }
-                                    p = p.parentElement;
-                                }
-                                if (!inComment) {
-                                    const t = (el.innerText || '').trim();
-                                    if (t.length > 25 && t.length < 5000) return t;
-                                }
+                            function depth(el) {
+                                let d = 0, p = el.parentElement;
+                                while (p && p !== node) { d++; p = p.parentElement; }
+                                return d;
                             }
-                            return '';
+                            const candidates = [];
+                            node.querySelectorAll('[dir="auto"]').forEach(el => {
+                                const t = (el.innerText || '').trim();
+                                if (t.length > 25 && t.length < 5000)
+                                    candidates.push({ t, d: depth(el) });
+                            });
+                            if (!candidates.length) return '';
+                            candidates.sort((a, b) => a.d - b.d || 0);
+                            // Saltar si empieza con @ (mención de comentario)
+                            for (const c of candidates.slice(0, 3)) {
+                                if (!c.t.startsWith('@')) return c.t;
+                            }
+                            return candidates[0].t;
                         }
                     """)
 
