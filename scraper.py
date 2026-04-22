@@ -299,7 +299,8 @@ class FacebookScraper:
 
     def _fetch_posts_sync(self, page_name: str) -> list[dict]:
         """Corre DENTRO del hilo _worker — puede usar Playwright libremente."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
+        max_age  = datetime.now(timezone.utc) - timedelta(hours=24)  # descartar posts > 24h
+        max_posts = 3  # solo las 3 publicaciones más recientes por página
         ctx        = _get_context()
         pw_page    = ctx.new_page()
         results    = []
@@ -403,8 +404,8 @@ class FacebookScraper:
                         pt = datetime.fromisoformat(date)
                         if pt.tzinfo is None:
                             pt = pt.replace(tzinfo=timezone.utc)
-                        if pt < cutoff:
-                            continue
+                        if pt < max_age:
+                            continue  # más de 24h, ignorar
                     except Exception:
                         pass
 
@@ -424,6 +425,8 @@ class FacebookScraper:
                         "image_url":   image_b64,
                         "is_video":    False,
                     })
+                    if len(results) >= max_posts:
+                        break
 
                 except Exception as e:
                     log.debug(f"[{page_name}] Error en artículo: {e}")
