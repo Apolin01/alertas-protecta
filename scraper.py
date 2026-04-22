@@ -257,6 +257,8 @@ class FacebookScraper:
                     # Leer innerText completo y cortar antes de la barra de acciones
                     # ("Me gusta / Comentar / Compartir"), que separa el cuerpo del post
                     # de los comentarios. Cada botón aparece solo en su propia línea.
+                    # Detectar la línea de la hora ("3 h", "2 d", "30 min") y
+                    # empezar a leer el cuerpo del post DESPUÉS de ella.
                     text = article.evaluate("""
                         node => {
                             const raw = (node.innerText || '');
@@ -265,13 +267,19 @@ class FacebookScraper:
                                 'Me gusta','Like','Comentar','Comment',
                                 'Compartir','Share','Reaccionar','React'
                             ]);
+                            // Corte: antes de la barra de acciones
                             let cutoff = lines.length;
                             for (let i = 0; i < lines.length; i++) {
                                 if (ACTIONS.has(lines[i])) { cutoff = i; break; }
                             }
-                            // Saltar las primeras 2 líneas (nombre de página + hora/privacidad)
-                            const body = lines.slice(2, cutoff).join(' ').trim();
-                            // Quitar "Ver más" al final si quedó
+                            // Inicio: línea DESPUÉS de la que contiene la hora relativa
+                            // Buscar patrón tipo "3 h", "2 d", "30 min", "1 h · Público"
+                            const timeRe = /^\\d+\\s*(min|h|d|w|s)\\b/i;
+                            let startIdx = 1; // mínimo saltar nombre de página
+                            for (let i = 0; i < Math.min(cutoff, 8); i++) {
+                                if (timeRe.test(lines[i])) { startIdx = i + 1; break; }
+                            }
+                            const body = lines.slice(startIdx, cutoff).join(' ').trim();
                             return body.replace(/Ver más$/, '').replace(/See more$/, '').trim();
                         }
                     """)
