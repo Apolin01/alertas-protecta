@@ -108,17 +108,32 @@ def _load_cookies_txt(path: str) -> list[dict]:
     return []
 
 
-_session_expired = False  # bandera para no reintentar en el mismo ciclo
+_session_expired = False  # bandera: sesión con cookies expiró, ahora en modo anónimo
+
+
+def _reset_to_anonymous():
+    """Cierra el contexto actual y fuerza recreación sin cookies (modo anónimo)."""
+    global _pw, _ctx, _session_expired
+    _session_expired = True
+    if _ctx:
+        try:
+            _ctx.close()
+        except Exception:
+            pass
+        _ctx = None
+    if _pw:
+        try:
+            _pw.stop()
+        except Exception:
+            pass
+        _pw = None
+    log.warning("[Scraper] Sesión FB expirada → continuando en modo anónimo (páginas públicas)")
 
 
 def _mark_session_expired():
     global _session_expired
     if not _session_expired:
-        _session_expired = True
-        log.error(
-            "[Scraper] Sesión de Facebook expirada. "
-            "Actualiza FB_COOKIES en Railway → Variables con cookies frescas de facebook.com"
-        )
+        _reset_to_anonymous()
 
 
 def is_session_expired() -> bool:
@@ -216,23 +231,27 @@ def _get_context():
             if cookies:
                 _ctx.add_cookies(cookies)
 
-        # Verificar si hay sesión válida; si no, intentar login automático
+        # Verificar sesión; si no hay, intentar login o continuar anónimo
         test = _ctx.new_page()
         try:
             test.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=20000)
             test.wait_for_timeout(2000)
             if "login" in test.url or "checkpoint" in test.url:
-                log.warning("[Scraper] Sin sesión válida — intentando login automático...")
                 test.close()
-                if not _do_login(_ctx):
-                    log.error("[Scraper] Login fallido. Configura FB_EMAIL+FB_PASSWORD en Railway Variables.")
+                logged_in = _do_login(_ctx)
+                if logged_in:
+                    log.info("[Scraper] ✓ Login automático exitoso.")
+                    _session_expired = False
+                else:
+                    log.warning("[Scraper] Sin login — modo anónimo (páginas públicas disponibles).")
+                    _session_expired = True
             else:
-                log.info("[Scraper] Sesión de Facebook válida.")
+                log.info("[Scraper] ✓ Sesión de Facebook válida.")
                 test.close()
+                _session_expired = False
         except Exception:
             test.close()
-
-        _session_expired = False
+            _session_expired = True
         log.info("[Scraper] Browser listo.")
     return _ctx
 
@@ -296,9 +315,6 @@ class FacebookScraper:
 
     def _fetch_posts_sync(self, page_name: str) -> list[dict]:
         """Corre DENTRO del hilo _worker — puede usar Playwright libremente."""
-        if _session_expired:
-            log.warning(f"[{page_name}] SKIP — sesión FB expirada")
-            return []
         cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
         ctx        = _get_context()
         pw_page    = ctx.new_page()

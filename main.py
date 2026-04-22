@@ -102,7 +102,7 @@ def process_page(page_name, config, classifier, dedup,
 
     if not posts:
         if is_session_expired():
-            log.warning(f"[{page_name}] 0 posts — sesión FB expirada")
+            log.info(f"[{page_name}] 0 posts (modo anónimo)")
         else:
             log.info(f"[{page_name}] 0 posts encontrados")
         return 0
