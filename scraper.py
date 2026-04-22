@@ -267,10 +267,16 @@ class FacebookScraper:
                                 'Me gusta','Like','Comentar','Comment',
                                 'Compartir','Share','Reaccionar','React'
                             ]);
-                            // Corte: antes de la barra de acciones
+                            const CUTOFF_CONTAINS = [
+                                'Todas las reacciones','All reactions',
+                                'reacciones:','reactions:'
+                            ];
+                            const VIDEO_RE = /\\d+:\\d+\\s*\\/\\s*\\d+:\\d+/;
+                            // Corte: antes de la barra de acciones o conteo de reacciones
                             let cutoff = lines.length;
                             for (let i = 0; i < lines.length; i++) {
                                 if (ACTIONS.has(lines[i])) { cutoff = i; break; }
+                                if (CUTOFF_CONTAINS.some(p => lines[i].includes(p))) { cutoff = i; break; }
                             }
                             // Inicio: línea DESPUÉS de la que contiene la hora relativa
                             // Buscar patrón tipo "3 h", "2 d", "30 min", "1 h · Público"
@@ -279,7 +285,10 @@ class FacebookScraper:
                             for (let i = 0; i < Math.min(cutoff, 8); i++) {
                                 if (timeRe.test(lines[i])) { startIdx = i + 1; break; }
                             }
-                            const body = lines.slice(startIdx, cutoff).join(' ').trim();
+                            // Filtrar líneas con duraciones de video (0:00 / 3:44)
+                            const bodyLines = lines.slice(startIdx, cutoff)
+                                .filter(l => !VIDEO_RE.test(l));
+                            const body = bodyLines.join(' ').trim();
                             return body.replace(/Ver más$/, '').replace(/See more$/, '').trim();
                         }
                     """)
