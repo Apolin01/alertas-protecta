@@ -108,32 +108,17 @@ def _load_cookies_txt(path: str) -> list[dict]:
     return []
 
 
-_session_expired = False  # bandera: sesión con cookies expiró, ahora en modo anónimo
-
-
-def _reset_to_anonymous():
-    """Cierra el contexto actual y fuerza recreación sin cookies (modo anónimo)."""
-    global _pw, _ctx, _session_expired
-    _session_expired = True
-    if _ctx:
-        try:
-            _ctx.close()
-        except Exception:
-            pass
-        _ctx = None
-    if _pw:
-        try:
-            _pw.stop()
-        except Exception:
-            pass
-        _pw = None
-    log.warning("[Scraper] Sesión FB expirada → continuando en modo anónimo (páginas públicas)")
+_session_expired = False  # bandera: sesión con cookies expiró, modo anónimo
 
 
 def _mark_session_expired():
     global _session_expired
     if not _session_expired:
-        _reset_to_anonymous()
+        _session_expired = True
+        log.warning(
+            "[Scraper] Sesión FB expirada → modo anónimo "
+            "(páginas públicas siguen funcionando sin login)"
+        )
 
 
 def is_session_expired() -> bool:
@@ -238,8 +223,7 @@ def _get_context():
             test.wait_for_timeout(2000)
             if "login" in test.url or "checkpoint" in test.url:
                 test.close()
-                logged_in = _do_login(_ctx)
-                if logged_in:
+                if _do_login(_ctx):
                     log.info("[Scraper] ✓ Login automático exitoso.")
                     _session_expired = False
                 else:
@@ -249,9 +233,9 @@ def _get_context():
                 log.info("[Scraper] ✓ Sesión de Facebook válida.")
                 test.close()
                 _session_expired = False
-        except Exception:
+        except Exception as ex:
+            log.warning(f"[Scraper] Error verificando sesión: {ex}")
             test.close()
-            _session_expired = True
         log.info("[Scraper] Browser listo.")
     return _ctx
 
