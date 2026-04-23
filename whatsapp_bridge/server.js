@@ -152,21 +152,45 @@ client.on("auth_failure", (msg) => {
 // ─────────────────────────────────────────────
 let _cacheBuilding = false;
 
+async function getGroupsLightweight() {
+    // Accede directo al store interno de WA Web — solo extrae name + id,
+    // sin serializar chats completos. Mucho más rápido que client.getChats().
+    return client.pupPage.evaluate(() => {
+        try {
+            const models = window.Store && window.Store.Chat
+                ? Array.from(window.Store.Chat.models)
+                : [];
+            return models
+                .filter(c => c.isGroup)
+                .map(c => ({
+                    name: c.name || c.formattedTitle || "",
+                    id:   c.id && c.id._serialized ? c.id._serialized : ""
+                }))
+                .filter(c => c.name && c.id);
+        } catch (e) {
+            return null;
+        }
+    });
+}
+
 async function buildGroupCache() {
     if (_cacheBuilding) {
         console.log("[Cache] buildGroupCache ya en curso, saltando.");
         return;
     }
     _cacheBuilding = true;
-    console.log("\nCargando grupos de WhatsApp...");
+    console.log("\nCargando grupos de WhatsApp (modo ligero)...");
     try {
-        const chats  = await client.getChats();
-        const groups = chats.filter(c => c.isGroup);
-        const newCache = {};
+        const groups = await getGroupsLightweight();
 
+        if (!groups || groups.length === 0) {
+            throw new Error("Store vacío o no disponible aún");
+        }
+
+        const newCache = {};
         console.log(`\nGrupos encontrados (${groups.length}):`);
         groups.forEach(g => {
-            newCache[g.name] = g.id._serialized;
+            newCache[g.name] = g.id;
             console.log(`  "${g.name}"`);
         });
 
@@ -183,7 +207,7 @@ async function buildGroupCache() {
 
     } catch (err) {
         console.error("Error cargando grupos:", err.message);
-        console.log("[Cache] Usando cache previo del disco. Reintentando en 2 min...");
+        console.log("[Cache] Reintentando en 2 min...");
         setTimeout(() => {
             _cacheBuilding = false;
             buildGroupCache().catch(e => console.error("Reintento fallido:", e.message));
@@ -194,19 +218,17 @@ async function buildGroupCache() {
 }
 
 async function findGroupChatId(realName) {
-    // Buscar en cache primero
     if (groupCache[realName]) return groupCache[realName];
 
-    // Intentar getChats si no está en cache
-    console.log(`[Cache] Buscando '${realName}' via getChats...`);
+    console.log(`[Cache] '${realName}' no en cache, recargando...`);
     try {
-        const chats = await client.getChats();
-        chats.filter(c => c.isGroup).forEach(g => {
-            groupCache[g.name] = g.id._serialized;
-        });
-        saveCacheToDisk();
+        const groups = await getGroupsLightweight();
+        if (groups && groups.length > 0) {
+            groups.forEach(g => { groupCache[g.name] = g.id; });
+            saveCacheToDisk();
+        }
     } catch (e) {
-        console.error("[Cache] getChats fallido en búsqueda:", e.message);
+        console.error("[Cache] Búsqueda ligera fallida:", e.message);
     }
     return groupCache[realName] || null;
 }
