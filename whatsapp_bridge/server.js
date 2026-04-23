@@ -149,7 +149,7 @@ client.on("disconnected", (reason) => {
 // ── Captura automática de grupos desde mensajes entrantes ─────
 // Cuando llega cualquier mensaje de un grupo, guardamos su chatId.
 // Solo manda un mensaje desde tu celular a cada grupo y el cache se llena solo.
-client.on("message", async (msg) => {
+client.on("message_create", async (msg) => {
     const chatId = msg.from;
     if (!chatId || !chatId.endsWith("@g.us")) return;   // solo grupos
     if (Object.values(groupCache).includes(chatId)) return; // ya conocido
