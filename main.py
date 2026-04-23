@@ -171,6 +171,9 @@ def process_page(page_name, config, classifier, dedup,
             new_id = queue.push(group, wa_msg, image_url, alert)
             queued_ids.append(new_id)
 
+        # Marcar inmediatamente para que la misma noticia de otra página no pase el dedup
+        dedup.mark_alert_sent(alert)
+
         if getattr(config, "SHEETS_ENABLED", False):
             sheets_row = formatter.format_sheets_row(alert, post, config)
             sh_sender.append_row(sheets_row)
