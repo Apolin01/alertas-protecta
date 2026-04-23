@@ -1,8 +1,10 @@
 
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const express  = require("express");
-const QRCode = require("qrcode");
+const QRCode   = require("qrcode");
 const axios    = require("axios");
+const fs       = require("fs");
+const path     = require("path");
 
 // ─────────────────────────────────────────────
 // CONFIGURACION
@@ -74,6 +76,31 @@ let groupCache = {};  // nombre exacto → chatId
 let qrImageBase64 = "";
 let lastQrText = "";
 
+const CACHE_FILE = path.join(DATA_PATH, ".wwebjs_auth", "groupcache.json");
+
+function loadCacheFromDisk() {
+    try {
+        if (fs.existsSync(CACHE_FILE)) {
+            groupCache = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8"));
+            console.log(`[Cache] ${Object.keys(groupCache).length} grupos cargados desde disco.`);
+        }
+    } catch (e) {
+        console.warn("[Cache] No se pudo leer cache del disco:", e.message);
+    }
+}
+
+function saveCacheToDisk() {
+    try {
+        fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
+        fs.writeFileSync(CACHE_FILE, JSON.stringify(groupCache, null, 2), "utf8");
+        console.log(`[Cache] ${Object.keys(groupCache).length} grupos guardados en disco.`);
+    } catch (e) {
+        console.warn("[Cache] No se pudo guardar cache:", e.message);
+    }
+}
+
+loadCacheFromDisk();
+
 client.on("qr", async (qr) => {
     console.log("\nNuevo QR generado. Abre /qr en el navegador.");
     lastQrText = qr;
@@ -91,14 +118,23 @@ client.on("ready", () => {
     isReady = true;
     qrImageBase64 = "";
     lastQrText = "";
-    // Esperar 5s para que WhatsApp termine de sincronizar antes de cargar grupos
-    setTimeout(() => {
-        buildGroupCache().catch(err => {
-            console.error("Error cargando cache inicial:", err.message);
-            // Reintentar después de 30s
-            setTimeout(() => buildGroupCache().catch(e => console.error("Reintento fallido:", e.message)), 30000);
-        });
-    }, 5000);
+
+    const cachedCount = Object.keys(groupCache).length;
+    if (cachedCount > 0) {
+        console.log(`[Cache] ${cachedCount} grupos ya en memoria desde disco — omitiendo getChats() pesado.`);
+        // Refrescar en background después de 60s sin bloquear
+        setTimeout(() => {
+            buildGroupCache().catch(err => console.warn("Refresh cache fallido:", err.message));
+        }, 60000);
+    } else {
+        // Primera vez: cargar grupos (sin cache previo)
+        setTimeout(() => {
+            buildGroupCache().catch(err => {
+                console.error("Error cargando cache inicial:", err.message);
+                setTimeout(() => buildGroupCache().catch(e => console.error("Reintento fallido:", e.message)), 30000);
+            });
+        }, 5000);
+    }
 });
 
 client.on("disconnected", (reason) => {
@@ -127,6 +163,8 @@ async function buildGroupCache() {
             console.log(`  "${g.name}"`);
         });
 
+        saveCacheToDisk();
+
         console.log("\nEstado del mapeo GROUP_MAP:");
         for (const [logical, realName] of Object.entries(GROUP_MAP)) {
             const found = !!groupCache[realName];
@@ -137,6 +175,7 @@ async function buildGroupCache() {
 
     } catch (err) {
         console.error("Error cargando grupos:", err.message);
+        console.log("[Cache] Usando cache previo del disco si existe.");
     }
 }
 
