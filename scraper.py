@@ -305,8 +305,8 @@ class FacebookScraper:
 
     def _fetch_posts_sync(self, page_name: str) -> list[dict]:
         """Corre DENTRO del hilo _worker — puede usar Playwright libremente."""
-        max_age  = datetime.now(timezone.utc) - timedelta(hours=6)   # descartar posts > 6h
-        max_posts = 3  # solo las 3 publicaciones más recientes por página
+        max_age  = datetime.now(timezone.utc) - timedelta(hours=24)  # descartar posts > 24h
+        max_posts = self.config.POSTS_PER_PAGE                        # hasta 8 por página
         ctx        = _get_context()
         pw_page    = ctx.new_page()
         results    = []
