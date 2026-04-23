@@ -263,22 +263,25 @@ def close_browser():
 
 
 def _relative_to_iso(time_text: str) -> str:
-    """Convierte '4 h', '2 d', '30 min' a ISO timestamp aproximado."""
+    """Convierte '4 h', '2 d', '30 min', '2 sem', '3 mes' a ISO timestamp aproximado."""
     now = datetime.now(timezone.utc)
     t   = time_text.strip().lower()
     try:
         num = int("".join(filter(str.isdigit, t)))
-        if "d" in t:
-            return (now - timedelta(days=num)).isoformat()
+        if "min" in t:                                        # minutos — va antes de "m"
+            return (now - timedelta(minutes=num)).isoformat()
         elif "h" in t:
             return (now - timedelta(hours=num)).isoformat()
-        elif "min" in t or "m" in t:
-            return (now - timedelta(minutes=num)).isoformat()
-        elif "w" in t:
+        elif "sem" in t or "w" in t:                          # semanas (español) o weeks
             return (now - timedelta(weeks=num)).isoformat()
+        elif "mes" in t or "ano" in t or "año" in t:          # meses / años → muy antiguo
+            return (now - timedelta(days=num * 30)).isoformat()
+        elif "d" in t:
+            return (now - timedelta(days=num)).isoformat()
     except Exception:
         pass
-    return now.isoformat()
+    # No se pudo parsear → asumir muy antiguo para que sea filtrado
+    return (now - timedelta(days=365)).isoformat()
 
 
 class FacebookScraper:
@@ -302,7 +305,7 @@ class FacebookScraper:
 
     def _fetch_posts_sync(self, page_name: str) -> list[dict]:
         """Corre DENTRO del hilo _worker — puede usar Playwright libremente."""
-        max_age  = datetime.now(timezone.utc) - timedelta(hours=24)  # descartar posts > 24h
+        max_age  = datetime.now(timezone.utc) - timedelta(hours=6)   # descartar posts > 6h
         max_posts = 3  # solo las 3 publicaciones más recientes por página
         ctx        = _get_context()
         pw_page    = ctx.new_page()

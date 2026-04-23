@@ -38,13 +38,14 @@ def is_lima_valida(alert: dict) -> bool:
 # Si la IA se equivoca, este mapa lo corrige
 # ─────────────────────────────────────────────────────────────
 DEPT_TO_CLIENT = {
-    "ANCASH":      "Antamina",
-    "HUANUCO":     "Antamina",
-    "PASCO":       "Antamina",
-    "CAJAMARCA":   "Bechtel / Newmont",
-    "LORETO":      "Petrotal",
-    "UCAYALI":     "Petrotal",
-    # ICA y LA LIBERTAD tienen multiples clientes, la IA decide
+    "ANCASH":        "Antamina",
+    "HUANUCO":       "Antamina",
+    "PASCO":         "Antamina",
+    "CAJAMARCA":     "Bechtel / Newmont",
+    "LORETO":        "Petrotal",
+    "UCAYALI":       "Petrotal",
+    "LA LIBERTAD":   "Clientes Norte",   # Trujillo, Virú, Pataz → NUNCA Bechtel
+    # ICA tiene multiples clientes, la IA decide
 }
 
 def fix_client_by_dept(alert: dict) -> dict:
@@ -179,11 +180,21 @@ REGLA 2 — UBICACION MANDA, NO LA FUENTE:
   La pagina que publica NO determina el cliente ni la region.
   Leer el TEXTO completo para encontrar donde ocurrio el hecho.
   Una pagina de Ancash puede publicar noticias de Cajamarca o Lima.
+  USA TU CONOCIMIENTO GEOGRAFICO: si el texto menciona una ciudad, provincia
+  o distrito, infiere su departamento. Ejemplos:
+    Huaraz, Casma, Chimbote, Recuay, Carhuaz, Caraz, Yungay, Huari → ANCASH
+    Cajabamba, Celendin, Jaen, Bambamarca, Chota, Hualgayoc → CAJAMARCA
+    Tingo Maria, Huanuco ciudad, Leoncio Prado → HUANUCO
+    Cerro de Pasco, Oxapampa, Pasco ciudad → PASCO
+    Chincha, Nasca, Nazca, Palpa, Pisco ciudad → ICA
+    Trujillo, Viru, Chao, Ascope, Otuzco → LA LIBERTAD
+    Barranca, Supe, Huaura, Huaral → LIMA (provincia rural)
 
 ═══════════════════════════════════════════════
 REGLA 3 — DEPARTAMENTOS Y CLIENTES (MAPA FIJO):
   ANCASH, HUANUCO, PASCO → cliente SIEMPRE "Antamina"
   CAJAMARCA              → cliente SIEMPRE "Bechtel / Newmont"
+  LA LIBERTAD            → cliente SIEMPRE "Clientes Norte" — NUNCA "Bechtel / Newmont"
   LORETO, UCAYALI        → cliente SIEMPRE "Petrotal"
   JUNIN, AREQUIPA, PUNO, CUSCO → IGNORAR (salvo politica nacional)
 
