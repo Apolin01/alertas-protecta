@@ -51,7 +51,7 @@ const client = new Client({
     puppeteer: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         headless: true,
-        protocolTimeout: 120000,
+        protocolTimeout: 300000,
         args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -66,7 +66,7 @@ const client = new Client({
             "--no-first-run",
             "--mute-audio",
             "--hide-scrollbars",
-            "--js-flags=--max-old-space-size=128",
+            "--js-flags=--max-old-space-size=256",
         ],
     },
 });
@@ -150,19 +150,27 @@ client.on("auth_failure", (msg) => {
 // ─────────────────────────────────────────────
 // CACHE DE GRUPOS
 // ─────────────────────────────────────────────
+let _cacheBuilding = false;
+
 async function buildGroupCache() {
+    if (_cacheBuilding) {
+        console.log("[Cache] buildGroupCache ya en curso, saltando.");
+        return;
+    }
+    _cacheBuilding = true;
     console.log("\nCargando grupos de WhatsApp...");
     try {
         const chats  = await client.getChats();
         const groups = chats.filter(c => c.isGroup);
-        groupCache   = {};
+        const newCache = {};
 
         console.log(`\nGrupos encontrados (${groups.length}):`);
         groups.forEach(g => {
-            groupCache[g.name] = g.id._serialized;
+            newCache[g.name] = g.id._serialized;
             console.log(`  "${g.name}"`);
         });
 
+        groupCache = newCache;
         saveCacheToDisk();
 
         console.log("\nEstado del mapeo GROUP_MAP:");
@@ -175,8 +183,32 @@ async function buildGroupCache() {
 
     } catch (err) {
         console.error("Error cargando grupos:", err.message);
-        console.log("[Cache] Usando cache previo del disco si existe.");
+        console.log("[Cache] Usando cache previo del disco. Reintentando en 2 min...");
+        setTimeout(() => {
+            _cacheBuilding = false;
+            buildGroupCache().catch(e => console.error("Reintento fallido:", e.message));
+        }, 120000);
+        return;
     }
+    _cacheBuilding = false;
+}
+
+async function findGroupChatId(realName) {
+    // Buscar en cache primero
+    if (groupCache[realName]) return groupCache[realName];
+
+    // Intentar getChats si no está en cache
+    console.log(`[Cache] Buscando '${realName}' via getChats...`);
+    try {
+        const chats = await client.getChats();
+        chats.filter(c => c.isGroup).forEach(g => {
+            groupCache[g.name] = g.id._serialized;
+        });
+        saveCacheToDisk();
+    } catch (e) {
+        console.error("[Cache] getChats fallido en búsqueda:", e.message);
+    }
+    return groupCache[realName] || null;
 }
 
 // ─────────────────────────────────────────────
@@ -288,18 +320,13 @@ app.post("/send", async (req, res) => {
         });
     }
 
-    // Resolver nombre real → chatId
-    let chatId = groupCache[realName];
+    // Resolver nombre real → chatId (con búsqueda lazy si no está en cache)
+    const chatId = await findGroupChatId(realName);
     if (!chatId) {
-        // Recargar cache por si el grupo es nuevo
-        await buildGroupCache();
-        chatId = groupCache[realName];
-        if (!chatId) {
-            return res.status(404).json({
-                error: `Grupo '${realName}' no encontrado en WhatsApp`,
-                hint:  "Verifica el nombre exacto en GROUP_MAP. Corre GET /groups para ver todos.",
-            });
-        }
+        return res.status(404).json({
+            error: `Grupo '${realName}' no encontrado en WhatsApp`,
+            hint:  "Cache aún cargando o nombre incorrecto en GROUP_MAP. Reintenta en 2 min.",
+        });
     }
 
     try {
