@@ -121,19 +121,9 @@ client.on("ready", () => {
 
     const cachedCount = Object.keys(groupCache).length;
     if (cachedCount > 0) {
-        console.log(`[Cache] ${cachedCount} grupos ya en memoria desde disco — omitiendo getChats() pesado.`);
-        // Refrescar en background después de 60s sin bloquear
-        setTimeout(() => {
-            buildGroupCache().catch(err => console.warn("Refresh cache fallido:", err.message));
-        }, 60000);
+        console.log(`[Cache] ${cachedCount} grupos cargados desde disco. Listo para enviar.`);
     } else {
-        // Primera vez: cargar grupos (sin cache previo)
-        setTimeout(() => {
-            buildGroupCache().catch(err => {
-                console.error("Error cargando cache inicial:", err.message);
-                setTimeout(() => buildGroupCache().catch(e => console.error("Reintento fallido:", e.message)), 30000);
-            });
-        }, 5000);
+        console.log("[Cache] Sin cache en disco. Llama POST /set-cache con los IDs de grupos.");
     }
 });
 
@@ -304,13 +294,26 @@ app.get("/status", (req, res) => {
     });
 });
 
-// GET /groups — lista todos los grupos
+// GET /groups — lista todos los grupos con sus chatIds
 app.get("/groups", async (req, res) => {
     if (!isReady) return res.status(503).json({ error: "WhatsApp no listo" });
     res.json({
-        all_groups: Object.keys(groupCache),
+        all_groups: groupCache,   // { "Nombre grupo": "chatId@g.us" }
         mapped:     GROUP_MAP,
     });
+});
+
+// POST /set-cache — inyecta chatIds obtenidos del servidor local
+// Body: { "groups": { "Nombre exacto grupo": "xxxx@g.us", ... } }
+app.post("/set-cache", (req, res) => {
+    const { groups } = req.body;
+    if (!groups || typeof groups !== "object") {
+        return res.status(400).json({ error: 'Body esperado: { "groups": { "Nombre": "chatId@g.us" } }' });
+    }
+    Object.assign(groupCache, groups);
+    saveCacheToDisk();
+    console.log(`[Cache] ${Object.keys(groups).length} grupos inyectados. Total: ${Object.keys(groupCache).length}`);
+    res.json({ ok: true, total: Object.keys(groupCache).length, groups: groupCache });
 });
 
 // POST /reload-groups — recarga cache
