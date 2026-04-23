@@ -71,14 +71,14 @@ class Deduplicator:
 
     def _content_hash(self, alert: dict) -> str:
         """
-        Hash basado en departamento + subcategoria + primeras 60 letras del resumen.
-        Detecta la misma noticia publicada por distintas paginas.
+        Hash basado en departamento + primeras 40 letras del resumen.
+        Sin subcategoria: el mismo evento clasificado por dos paginas distintas
+        puede producir subcategorias diferentes, causando duplicados.
         """
         departamento = (alert.get("departamento") or "").upper().strip()
-        subcategoria = (alert.get("subcategoria") or "").upper().strip()
         resumen_raw  = (alert.get("resumen_whatsapp") or "").lower()
-        resumen_norm = "".join(c for c in resumen_raw if c.isalnum())[:60]
-        key = f"{departamento}|{subcategoria}|{resumen_norm}"
+        resumen_norm = "".join(c for c in resumen_raw if c.isalnum())[:40]
+        key = f"{departamento}|{resumen_norm}"
         return hashlib.md5(key.encode("utf-8")).hexdigest()
 
     # ─────────────────────────────────────────────
