@@ -150,30 +150,45 @@ client.on("disconnected", (reason) => {
 // Cuando llega cualquier mensaje de un grupo, guardamos su chatId.
 // Solo manda un mensaje desde tu celular a cada grupo y el cache se llena solo.
 client.on("message_create", async (msg) => {
-    // outgoing: grupo está en msg.to — incoming: grupo está en msg.from
     const chatId = msg.fromMe ? msg.to : msg.from;
-    if (!chatId || !chatId.endsWith("@g.us")) return;   // solo grupos
-    if (Object.values(groupCache).includes(chatId)) return; // ya conocido
+    console.log(`[MsgCreate] fromMe=${msg.fromMe} from=${msg.from} to=${msg.to} → chatId=${chatId}`);
+
+    if (!chatId || !chatId.endsWith("@g.us")) return;
+    if (Object.values(groupCache).includes(chatId)) {
+        console.log(`[Cache] chatId ${chatId} ya conocido`);
+        return;
+    }
 
     try {
-        const name = await client.pupPage.evaluate((id) => {
-            if (!window.Store || !window.Store.Chat) return null;
-            const chat = window.Store.Chat.get(id);
-            return chat ? (chat.name || chat.formattedTitle || null) : null;
-        }, chatId);
+        const name = await Promise.race([
+            client.pupPage.evaluate((id) => {
+                if (!window.Store || !window.Store.Chat) return null;
+                const chat = window.Store.Chat.get(id);
+                return chat ? (chat.name || chat.formattedTitle || null) : null;
+            }, chatId),
+            new Promise((_, r) => setTimeout(() => r(new Error("timeout 10s")), 10000))
+        ]);
 
         if (name) {
             groupCache[name] = chatId;
             saveCacheToDisk();
             console.log(`[Cache] ✅ Grupo capturado: "${name}" → ${chatId}`);
-
-            // Mostrar qué grupos del GROUP_MAP ya tenemos
             const ok = Object.values(GROUP_MAP).filter(n => groupCache[n]).length;
             console.log(`[Cache] Progreso: ${ok}/${Object.keys(GROUP_MAP).length} grupos mapeados`);
+        } else {
+            console.log(`[Cache] nombre no encontrado para ${chatId} — guardando por ID`);
+            groupCache[chatId] = chatId;
         }
     } catch (e) {
-        // ignorar — el mensaje sigue procesándose normalmente
+        console.warn(`[Cache] evaluate falló: ${e.message} — guardando chatId directo`);
+        groupCache[`group_${chatId}`] = chatId;
+        saveCacheToDisk();
     }
+});
+
+client.on("message", async (msg) => {
+    const chatId = msg.from;
+    console.log(`[Msg] from=${msg.from} isGroup=${chatId.endsWith("@g.us")}`);
 });
 
 client.on("auth_failure", (msg) => {
@@ -325,6 +340,33 @@ app.use((req, res, next) => {
     }
 
     next();
+});
+
+// GET /diagnose — estado interno del bridge
+app.get("/diagnose", async (req, res) => {
+    const info = {
+        isReady,
+        groupCache_size: Object.keys(groupCache).length,
+        groupCache,
+        cacheFile: CACHE_FILE,
+        cacheFileExists: fs.existsSync(CACHE_FILE),
+    };
+    try {
+        const store = await Promise.race([
+            client.pupPage.evaluate(() => ({
+                hasStore:    !!window.Store,
+                hasChat:     !!(window.Store && window.Store.Chat),
+                chatCount:   window.Store && window.Store.Chat ? window.Store.Chat.models.length : 0,
+                groupCount:  window.Store && window.Store.Chat
+                    ? Array.from(window.Store.Chat.models).filter(c => c.isGroup).length : 0,
+            })),
+            new Promise((_, r) => setTimeout(() => r(new Error("timeout 8s")), 8000))
+        ]);
+        info.store = store;
+    } catch (e) {
+        info.store_error = e.message;
+    }
+    res.json(info);
 });
 
 // GET /status
