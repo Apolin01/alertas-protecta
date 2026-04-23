@@ -407,8 +407,16 @@ class FacebookScraper:
                     image_b64 = ""
                     for img in article.locator("img").all():
                         src = img.get_attribute("src") or ""
-                        if "fbcdn.net" in src and not src.startswith("data:"):
-                            image_b64 = self._download_image_b64_sync(src)
+                        if "fbcdn.net" not in src or src.startswith("data:"):
+                            continue
+                        try:
+                            natural_w = img.evaluate("el => el.naturalWidth")
+                            if natural_w and natural_w < 200:
+                                continue  # avatar / icono pequeño
+                        except Exception:
+                            pass
+                        image_b64 = self._download_image_b64_sync(src)
+                        if image_b64:
                             break
 
                     date = _relative_to_iso(time_text)
