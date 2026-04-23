@@ -99,6 +99,13 @@ function saveCacheToDisk() {
     }
 }
 
+// ── Diagnóstico de arranque ───────────────────
+console.log("─".repeat(50));
+console.log(`[Init] DATA_PATH   : ${DATA_PATH}`);
+console.log(`[Init] CACHE_FILE  : ${CACHE_FILE}`);
+console.log(`[Init] Volumen OK  : ${fs.existsSync(path.dirname(CACHE_FILE)) ? "SI" : "NO — carpeta no existe"}`);
+console.log("─".repeat(50));
+
 loadCacheFromDisk();
 
 client.on("qr", async (qr) => {
@@ -121,16 +128,23 @@ client.on("ready", () => {
 
     const cachedCount = Object.keys(groupCache).length;
     if (cachedCount > 0) {
-        console.log(`[Cache] ${cachedCount} grupos cargados desde disco. Listo para enviar.`);
+        console.log(`[Cache] ${cachedCount} grupos en cache. Listo para enviar.`);
+        console.log("[Cache] Grupos disponibles:");
+        for (const [logical, realName] of Object.entries(GROUP_MAP)) {
+            const ok = !!groupCache[realName];
+            console.log(`  ${ok ? "✅" : "❌"} ${logical} → "${realName}"`);
+        }
     } else {
-        console.log("[Cache] Sin cache en disco. Llama POST /set-cache con los IDs de grupos.");
+        console.log("[Cache] ⚠️  Sin cache. El bridge NO puede enviar hasta que inyectes grupos.");
+        console.log("[Cache] Llama: POST /set-cache  con x-auth-token: protecta2026");
     }
 });
 
 client.on("disconnected", (reason) => {
-    console.log("❌ WhatsApp desconectado:", reason);
-    isReady    = false;
-    groupCache = {};
+    console.log(`❌ WhatsApp desconectado: ${reason}`);
+    isReady = false;
+    // Mantener groupCache en memoria — se recarga de disco si hace falta
+    loadCacheFromDisk();
 });
 
 client.on("auth_failure", (msg) => {
@@ -324,35 +338,44 @@ app.post("/reload-groups", async (req, res) => {
 
 // POST /send — envia alerta a un grupo
 app.post("/send", async (req, res) => {
+    const { group_name, message, image_url } = req.body;
+    console.log(`\n[Send] ▶ group_name="${group_name}" | msg=${(message||"").slice(0,60)}...`);
+
     if (!isReady) {
+        console.error("[Send] ✗ WhatsApp no conectado (isReady=false)");
         return res.status(503).json({
             error: "WhatsApp no conectado. Escanea el QR primero."
         });
     }
 
-    const { group_name, message, image_url } = req.body;
-
     if (!group_name || !message) {
+        console.error("[Send] ✗ Faltan campos group_name o message");
         return res.status(400).json({ error: "group_name y message son requeridos" });
     }
 
     // Resolver nombre logico → nombre real del grupo
     const realName = GROUP_MAP[group_name];
     if (!realName) {
+        console.error(`[Send] ✗ '${group_name}' no está en GROUP_MAP. Disponibles: ${Object.keys(GROUP_MAP).join(", ")}`);
         return res.status(404).json({
             error: `Grupo logico '${group_name}' no esta en GROUP_MAP`,
             available: Object.keys(GROUP_MAP),
         });
     }
+    console.log(`[Send] Resuelto → "${realName}"`);
 
     // Resolver nombre real → chatId (con búsqueda lazy si no está en cache)
     const chatId = await findGroupChatId(realName);
     if (!chatId) {
+        console.error(`[Send] ✗ chatId no encontrado para "${realName}". Cache actual (${Object.keys(groupCache).length} grupos): ${Object.keys(groupCache).join(", ") || "VACÍO"}`);
         return res.status(404).json({
-            error: `Grupo '${realName}' no encontrado en WhatsApp`,
-            hint:  "Cache aún cargando o nombre incorrecto en GROUP_MAP. Reintenta en 2 min.",
+            error: `Grupo '${realName}' no encontrado en cache`,
+            hint:  "Inyecta el cache con POST /set-cache",
+            cache_size: Object.keys(groupCache).length,
         });
     }
+    console.log(`[Send] chatId="${chatId}"`);
+
 
     try {
         let sent_with_image = false;
