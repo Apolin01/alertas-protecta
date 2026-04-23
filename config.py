@@ -55,6 +55,7 @@ class Config:
         "ABCNoticiasAncash": "Antamina",  # ABC Ancash
         "Zafiro.Imp": "Antamina",  # Áncash - Últimas Noticias
         "ancashaldia": "Antamina",  # Ancash al Día
+        "rogerio.tocre" : "Antamina",
         "100083039331687": "Antamina",  # Ancash D' Impacto
         "ancashnoticiasoficial": "Antamina",  # Áncash Noticias
         "andres.loartelaguna": "Antamina",  # Andres Loarte
