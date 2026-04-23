@@ -329,7 +329,7 @@ app.get("/qr", (req, res) => {
 
 // Auth middleware
 app.use((req, res, next) => {
-    const publicPaths = ["/qr", "/status", "/favicon.ico", "/"];
+    const publicPaths = ["/qr", "/status", "/diagnose", "/favicon.ico", "/"];
 
     if (publicPaths.includes(req.path)) {
         return next();
