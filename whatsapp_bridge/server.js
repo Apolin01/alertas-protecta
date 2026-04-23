@@ -143,8 +143,36 @@ client.on("ready", () => {
 client.on("disconnected", (reason) => {
     console.log(`❌ WhatsApp desconectado: ${reason}`);
     isReady = false;
-    // Mantener groupCache en memoria — se recarga de disco si hace falta
     loadCacheFromDisk();
+});
+
+// ── Captura automática de grupos desde mensajes entrantes ─────
+// Cuando llega cualquier mensaje de un grupo, guardamos su chatId.
+// Solo manda un mensaje desde tu celular a cada grupo y el cache se llena solo.
+client.on("message", async (msg) => {
+    const chatId = msg.from;
+    if (!chatId || !chatId.endsWith("@g.us")) return;   // solo grupos
+    if (Object.values(groupCache).includes(chatId)) return; // ya conocido
+
+    try {
+        const name = await client.pupPage.evaluate((id) => {
+            if (!window.Store || !window.Store.Chat) return null;
+            const chat = window.Store.Chat.get(id);
+            return chat ? (chat.name || chat.formattedTitle || null) : null;
+        }, chatId);
+
+        if (name) {
+            groupCache[name] = chatId;
+            saveCacheToDisk();
+            console.log(`[Cache] ✅ Grupo capturado: "${name}" → ${chatId}`);
+
+            // Mostrar qué grupos del GROUP_MAP ya tenemos
+            const ok = Object.values(GROUP_MAP).filter(n => groupCache[n]).length;
+            console.log(`[Cache] Progreso: ${ok}/${Object.keys(GROUP_MAP).length} grupos mapeados`);
+        }
+    } catch (e) {
+        // ignorar — el mensaje sigue procesándose normalmente
+    }
 });
 
 client.on("auth_failure", (msg) => {
