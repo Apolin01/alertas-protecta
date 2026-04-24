@@ -102,10 +102,11 @@ loadCacheFromDisk();
 // ─────────────────────────────────────────────
 // BAILEYS
 // ─────────────────────────────────────────────
-let sock      = null;
-let isReady   = false;
-let qrBase64  = "";
-let reconnectTimer = null;
+let sock               = null;
+let isReady            = false;
+let qrBase64           = "";
+let reconnectTimer     = null;
+let badSessionStreak   = 0;  // cuántos badSession consecutivos sin conectar
 
 async function loadGroups() {
     console.log("\n[Cache] Cargando grupos via groupFetchAllParticipating...");
@@ -163,20 +164,39 @@ async function startSock() {
             const reason = DisconnectReason[code] || code;
             console.log(`❌ Desconectado (${reason})`);
 
-            if (code === DisconnectReason.loggedOut || code === DisconnectReason.badSession) {
-                console.log(`Sesión inválida (${reason}). Limpiando auth dir y reconectando para nuevo QR...`);
+            if (code === DisconnectReason.loggedOut) {
+                // Logout explícito desde el celular → siempre borrar y pedir QR
+                console.log("Sesión cerrada desde el celular (logout). Limpiando auth...");
+                badSessionStreak = 0;
                 try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (_) {}
                 fs.mkdirSync(AUTH_DIR, { recursive: true });
                 if (reconnectTimer) clearTimeout(reconnectTimer);
                 reconnectTimer = setTimeout(startSock, 3000);
                 return;
             }
+
+            if (code === DisconnectReason.badSession) {
+                badSessionStreak++;
+                console.log(`[badSession] Intento ${badSessionStreak}/3 sin borrar sesión...`);
+                if (badSessionStreak >= 3) {
+                    // 3 fallos seguidos → sesión genuinamente corrupta → pedir nuevo QR
+                    console.log("[badSession] 3 fallos consecutivos. Limpiando auth y pidiendo nuevo QR.");
+                    badSessionStreak = 0;
+                    try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (_) {}
+                    fs.mkdirSync(AUTH_DIR, { recursive: true });
+                }
+                if (reconnectTimer) clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(startSock, 6000);
+                return;
+            }
+
             console.log("Reconectando en 5s...");
             if (reconnectTimer) clearTimeout(reconnectTimer);
             reconnectTimer = setTimeout(startSock, 5000);
 
         } else if (connection === "open") {
             console.log("\n✅ WhatsApp conectado (Baileys).");
+            badSessionStreak = 0;  // conexión exitosa → resetear contador
             isReady  = true;
             qrBase64 = "";
             await loadGroups();
@@ -304,6 +324,16 @@ app.post("/send", async (req, res) => {
         console.error(`❌ Error enviando a "${realName}":`, err.message);
         return res.status(500).json({ error: err.message });
     }
+});
+
+// Apagado limpio: Railway envía SIGTERM antes de detener el contenedor.
+// Guardar cache antes de salir evita corrupción de archivos de sesión.
+process.on("SIGTERM", () => {
+    console.log("[Shutdown] SIGTERM — guardando cache y cerrando...");
+    saveCacheToDisk();
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (sock) { try { sock.end(); } catch (_) {} }
+    setTimeout(() => process.exit(0), 1500);
 });
 
 app.listen(PORT, () => {
