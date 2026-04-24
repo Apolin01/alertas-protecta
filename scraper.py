@@ -335,6 +335,8 @@ class FacebookScraper:
                 pw_page.wait_for_timeout(1500)
 
             articles = pw_page.locator('[role="article"]').all()
+            skipped_old   = 0
+            skipped_empty = 0
 
             for article in articles[:self.config.POSTS_PER_PAGE + 2]:
                 try:
@@ -408,6 +410,7 @@ class FacebookScraper:
                     """)
 
                     if not text:
+                        skipped_empty += 1
                         continue
 
                     article.scroll_into_view_if_needed()
@@ -450,6 +453,7 @@ class FacebookScraper:
                         if pt.tzinfo is None:
                             pt = pt.replace(tzinfo=timezone.utc)
                         if pt < max_age:
+                            skipped_old += 1
                             continue  # más de 24h, ignorar
                     except Exception:
                         pass
@@ -475,6 +479,12 @@ class FacebookScraper:
 
                 except Exception as e:
                     log.debug(f"[{page_name}] Error en artículo: {e}")
+
+            if skipped_old or skipped_empty:
+                motivos = []
+                if skipped_old:   motivos.append(f"{skipped_old} antigua(s)")
+                if skipped_empty: motivos.append(f"{skipped_empty} sin texto")
+                log.info(f"[{page_name}] {len(results)} útil(es) / {len(articles)} en feed — descartado(s): {', '.join(motivos)}")
 
         except Exception as e:
             log.warning(f"[{page_name}] Error: {e}")
