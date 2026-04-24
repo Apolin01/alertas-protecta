@@ -146,8 +146,12 @@ REGLAS PARA palabras_clave (MAXIMO 3):
     - Conflicto laboral: LABORAL + nombre del sindicato (SUTEP, CGTP, FETSA) o SUNAFIL si se menciona
     - AGRO = agroindustria en general; AGRICULTORES = pequeños productores con dificultades economicas
     - Incluir nombre del CLIENTE si la noticia ocurre en su zona o lo mencionan:
-        ANTAMINA, AGRICOLA-CHAPI, DON-RICARDO, RVR, FUNDO-LUZMILA, PETROTAL,
-        DON-LUIS, LA-CALERA, MISSION, CAMPOS-DEL-SUR, CAMPO-ANDINO
+        Mineria: ANTAMINA, YANACOCHA, NEWMONT, BECHTEL, CONGA
+        Agro Sur (ICA/Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO,
+            FAMILY-FARMS, SUN-FRUITS, VANGUARD, RVR, UVICA, CAMPOS-DEL-SUR, DON-LUIS, DON-RICARDO
+        Agro Norte (La Libertad/costa): CASA-GRANDE, DANPER, MISSION, HORTIFRUT, GREEN-PERU,
+            HASS, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA, LAREDO, ADAS, CAMPO-ANDINO
+        Otros: PETROTAL, AGRICOLA-SANTA-AZUL
     - Incluir abreviaciones si se nombran explicitamente en el texto:
         CODEHICA, CNDDHH, SEDYS, FETSA, CAMPOSOL, SITECASA-CAMPOSOL,
         CNUL, CPUL-ICA, STCCI, SUTEP, CGTP, TUAGRAP
@@ -193,7 +197,7 @@ REGLA 2 — UBICACION MANDA, NO LA FUENTE:
 ═══════════════════════════════════════════════
 REGLA 3 — DEPARTAMENTOS Y CLIENTES (MAPA FIJO):
   ANCASH, HUANUCO, PASCO → cliente SIEMPRE "Antamina"
-  CAJAMARCA              → cliente SIEMPRE "Bechtel / Newmont"
+  CAJAMARCA              → cliente SIEMPRE "Bechtel / Newmont"  (incluye: Minera Yanacocha, Newmont, proyecto Conga, Gold Fields La Cima)
   LA LIBERTAD            → cliente SIEMPRE "Clientes Norte" — NUNCA "Bechtel / Newmont"
   LORETO, UCAYALI        → cliente SIEMPRE "Petrotal"
   JUNIN, AREQUIPA, PUNO, CUSCO → IGNORAR (salvo politica nacional)
@@ -230,7 +234,7 @@ NIVELES:
 CLIENTES VALIDOS:
   "Ninguno (Coyuntura Nacional)"  — politica nacional del gobierno central
   "Antamina"           — ANCASH, HUANUCO, PASCO (todas sus provincias)
-  "Bechtel / Newmont"  — CAJAMARCA (todas sus provincias)
+  "Bechtel / Newmont"  — CAJAMARCA (todas sus provincias); empresas: Minera Yanacocha, Newmont, proyecto Conga, Bechtel
   "Petrotal"           — LORETO, UCAYALI
   "Pisco"              — ICA provincia de Pisco, zona costera pesquera
   "Agricola Santa Azul"— LIMA: BARRANCA, SUPE, HUAURA solamente
@@ -248,6 +252,23 @@ CLIENTES VALIDOS:
   "Uvica"              — ICA zona sur
   "Clientes Sur"       — ICA, Arequipa general
   "Clientes Norte"     — LA LIBERTAD, LAMBAYEQUE, PIURA general
+
+═══════════════════════════════════════════════
+REGLA 7 — EMPRESA CLIENTE MENCIONADA DIRECTAMENTE:
+  Si el texto nombra EXPLICITAMENTE una empresa cliente → nivel minimo ALRT e incluir en palabras_clave.
+  Si hay protesta, bloqueo, accidente o denuncia CONTRA ellas → CRIT.
+
+  MINERIA:
+    Antamina     → "ANTAMINA", "COMPANIA MINERA ANTAMINA"
+    Yanacocha    → "YANACOCHA", "MINERA YANACOCHA", "NEWMONT", "CONGA", "BECHTEL"
+
+  AGRO SUR (ICA / Arequipa):
+    ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY FARMS,
+    SUN FRUITS, VANGUARD, RVR, UVICA, CAMPOS DEL SUR, DON LUIS, DON RICARDO, AGROMIGIVA
+
+  AGRO NORTE (La Libertad / costa norte):
+    CASA GRANDE, DANPER, MISSION, HORTIFRUT, GREEN PERU, HASS PERU,
+    CAMPOSOL, GIDDINGS, TALSA, WESTFALIA FRUIT, LAREDO, ADAS, CAMPO ANDINO
 """
 
 USER_TEMPLATE = """Clasifica esta publicacion de Facebook.

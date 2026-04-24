@@ -345,10 +345,16 @@ class FacebookScraper:
                     for link in article.locator("a").all():
                         txt  = (link.inner_text() or "").strip()
                         href = (link.get_attribute("href") or "")
-                        # Tiempo relativo (modo con sesión): "8 h", "30 min", "2 d"
-                        if re.match(r"^\d+\s*(min|h|d|w|s)$", txt):
+                        # Tiempo relativo (modo con sesión): "8 h", "30 min", "2 d", "1 sem"
+                        if re.match(r"^\d+\s*(min|h|d|sem|w|s)$", txt, re.IGNORECASE):
                             time_link = link
                             time_text = txt
+                            post_url  = href.split("?")[0]
+                            break
+                        # Fecha absoluta FB: "14 de abr.", "5 mayo" → post >7 días → filtrar
+                        if re.match(r"^\d{1,2}\s+(de\s+)?[a-z\xe1\xe9\xed\xf3\xfa\xfc]{3}", txt, re.IGNORECASE):
+                            time_link = link
+                            time_text = "30 d"  # forzar antiguo → descartado por max_age
                             post_url  = href.split("?")[0]
                             break
                         # Fallback modo anónimo: enlace directo a publicación
