@@ -338,7 +338,7 @@ class FacebookScraper:
             skipped_old   = 0
             skipped_empty = 0
 
-            for article in articles[:self.config.POSTS_PER_PAGE + 2]:
+            for article in articles[:max_posts * 2]:  # evalúa hasta 16 para encontrar 8 recientes
                 try:
                     time_link = None
                     time_text = ""
@@ -413,6 +413,18 @@ class FacebookScraper:
                         skipped_empty += 1
                         continue
 
+                    # Filtro de fecha ANTES del scroll/imagen → posts viejos se descartan rápido
+                    date = _relative_to_iso(time_text)
+                    try:
+                        pt = datetime.fromisoformat(date)
+                        if pt.tzinfo is None:
+                            pt = pt.replace(tzinfo=timezone.utc)
+                        if pt < max_age:
+                            skipped_old += 1
+                            continue
+                    except Exception:
+                        pass
+
                     article.scroll_into_view_if_needed()
                     pw_page.wait_for_timeout(1500)
 
@@ -444,17 +456,6 @@ class FacebookScraper:
                                         image_b64 = self._download_image_b64_sync(poster)
                                         if image_b64:
                                             break
-                    except Exception:
-                        pass
-
-                    date = _relative_to_iso(time_text)
-                    try:
-                        pt = datetime.fromisoformat(date)
-                        if pt.tzinfo is None:
-                            pt = pt.replace(tzinfo=timezone.utc)
-                        if pt < max_age:
-                            skipped_old += 1
-                            continue  # más de 24h, ignorar
                     except Exception:
                         pass
 
