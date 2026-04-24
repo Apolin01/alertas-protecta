@@ -155,8 +155,12 @@ async function startSock() {
             const reason = DisconnectReason[code] || code;
             console.log(`❌ Desconectado (${reason})`);
 
-            if (code === DisconnectReason.loggedOut) {
-                console.log("Sesión cerrada. Borra AUTH_DIR y reconecta.");
+            if (code === DisconnectReason.loggedOut || code === DisconnectReason.badSession) {
+                console.log(`Sesión inválida (${reason}). Limpiando auth dir y reconectando para nuevo QR...`);
+                try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (_) {}
+                fs.mkdirSync(AUTH_DIR, { recursive: true });
+                if (reconnectTimer) clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(startSock, 3000);
                 return;
             }
             console.log("Reconectando en 5s...");

@@ -422,6 +422,22 @@ class FacebookScraper:
                         if image_b64:
                             break
 
+                    # Videos: extraer poster (thumbnail) si no hay imagen
+                    is_video = False
+                    try:
+                        videos = article.locator("video").all()
+                        if videos:
+                            is_video = True
+                            if not image_b64:
+                                for vid in videos:
+                                    poster = vid.get_attribute("poster") or ""
+                                    if poster and poster.startswith("http"):
+                                        image_b64 = self._download_image_b64_sync(poster)
+                                        if image_b64:
+                                            break
+                    except Exception:
+                        pass
+
                     date = _relative_to_iso(time_text)
                     try:
                         pt = datetime.fromisoformat(date)
@@ -446,7 +462,7 @@ class FacebookScraper:
                         "likes":       0,
                         "shares":      0,
                         "image_url":   image_b64,
-                        "is_video":    False,
+                        "is_video":    is_video,
                     })
                     if len(results) >= max_posts:
                         break

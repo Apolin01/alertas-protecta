@@ -45,6 +45,33 @@ def now_peru() -> datetime:
 
 
 # ─────────────────────────────────────────────────────────────
+# REINTENTO — alertas que fallaron por bridge caído
+# ─────────────────────────────────────────────────────────────
+def retry_unsent(queue: AlertQueue, wa_sender: WhatsAppSender, dedup: Deduplicator):
+    """Reintenta alertas sent=0 de las últimas 4h (bridge estaba caído)."""
+    groups = queue.get_recent_unsent(max_age_hours=4)
+    if not groups:
+        return
+    total = sum(len(v) for v in groups.values())
+    log.info(f"[REINTENTO] {total} alerta(s) pendiente(s) de envios fallidos")
+    for group, items in groups.items():
+        for item in items:
+            with _send_lock:
+                ok = wa_sender.send(group, item["message"], image_url=item.get("image_url", ""))
+            if ok:
+                queue.mark_sent(item["id"])
+                log.info(f"[REINTENTO] ✓ Enviado a '{group}'")
+                try:
+                    _alert_data = json.loads(item.get("alert_json", "{}"))
+                    dedup.mark_alert_sent(_alert_data)
+                except Exception:
+                    pass
+            else:
+                log.warning(f"[REINTENTO] ✗ Aún sin bridge para '{group}'")
+            time.sleep(1)
+
+
+# ─────────────────────────────────────────────────────────────
 # ENVIO INMEDIATO — se llama despues de cada pagina
 # ─────────────────────────────────────────────────────────────
 def flush_all_pending(queued_ids: list[int], queue: AlertQueue,
@@ -154,14 +181,8 @@ def process_page(page_name, config, classifier, dedup,
         tabla_msg = formatter.format_tabla(alert, post, config)
         image_url = post.get("image_url", "")
 
-        sep = "─" * 60
-        print(f"\n{sep}")
-        print("▶ FORMATO TABLA:")
-        print(tabla_msg)
-        print(f"{sep}")
-        print("▶ FORMATO WHATSAPP:")
-        print(wa_msg)
-        print(f"{sep}\n")
+        log.debug(f"TABLA: {tabla_msg}")
+        log.debug(f"WHATSAPP: {wa_msg}")
 
         if not groups:
             log.warning(f"[{page_name}] Sin grupo WhatsApp para cliente '{cliente}' — no se envia")
@@ -265,6 +286,9 @@ def run_forever():
             f"CICLO {ciclo} — {now_peru().strftime('%d-%m-%Y %H:%M')} PE\n"
             f"{'='*60}"
         )
+
+        # Reintentar alertas que fallaron por bridge caído en ciclos anteriores
+        retry_unsent(queue, wa_sender, dedup)
 
         ciclo_alertas = 0
         for region in regions:

@@ -140,6 +140,22 @@ class AlertQueue:
         )
         return [r[0] for r in cur.fetchall()]
 
+    def get_recent_unsent(self, max_age_hours: int = 4) -> dict[str, list[dict]]:
+        """Retorna alertas no enviadas de las últimas N horas, agrupadas por grupo."""
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+        cur = self._cursor()
+        cur.execute(
+            "SELECT id, group_name, message, image_url, alert_json FROM pending "
+            "WHERE sent=0 AND created_at > %s ORDER BY id",
+            (cutoff,)
+        )
+        groups: dict[str, list[dict]] = {}
+        for r in cur.fetchall():
+            entry = {"id": r[0], "message": r[2], "image_url": r[3], "alert_json": r[4]}
+            groups.setdefault(r[1], []).append(entry)
+        return groups
+
     def cleanup_old(self, days: int = 2):
         """Borra alertas enviadas de mas de N dias."""
         from datetime import timedelta
