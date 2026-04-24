@@ -14,6 +14,14 @@ const fs       = require("fs");
 const path     = require("path");
 const pino     = require("pino");
 
+// Silenciar errores internos de libsignal (Bad MAC de mensajes de sesiones antiguas, inofensivos)
+const _origConsoleError = console.error.bind(console);
+console.error = (...args) => {
+    const msg = String(args[0] || '');
+    if (msg.includes('Bad MAC') || msg.includes('Session error') || msg.includes('Failed to decrypt')) return;
+    _origConsoleError(...args);
+};
+
 // ─────────────────────────────────────────────
 // CONFIGURACION
 // ─────────────────────────────────────────────

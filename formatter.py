@@ -6,7 +6,12 @@ formatter.py — Genera los dos formatos de salida.
 
 import re
 import requests
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+_PERU_TZ = timezone(timedelta(hours=-5))
+
+def _now_peru(fmt: str) -> str:
+    return datetime.now(_PERU_TZ).strftime(fmt)
 
 NIVEL_EMOJI = {
     "CRIT": "CRIT 🔴",
@@ -76,7 +81,7 @@ class AlertFormatter:
     # Siempre exactamente 6 underscores (7 columnas).
     # ─────────────────────────────────────────────────────────────
     def format_tabla(self, alert: dict, post: dict, config=None) -> str:
-        fecha = alert.get("fecha_str") or datetime.now().strftime("%d-%m-%y")
+        fecha = alert.get("fecha_str") or _now_peru("%d-%m-%y")
 
         dept = (alert.get("departamento") or "").upper().strip()
         prov = (alert.get("provincia") or dept).upper().strip()
@@ -111,7 +116,7 @@ class AlertFormatter:
     #   - * literales visibles (negrita en WhatsApp)
     # ─────────────────────────────────────────────────────────────
     def format_whatsapp(self, alert: dict, post: dict, config=None) -> str:
-        fecha = alert.get("fecha_str") or datetime.now().strftime("%d-%m-%y")
+        fecha = alert.get("fecha_str") or _now_peru("%d-%m-%y")
 
         dept = (alert.get("departamento") or "").upper().strip()
         dist = (alert.get("distrito") or alert.get("provincia") or dept).upper().strip()
@@ -149,7 +154,7 @@ class AlertFormatter:
     # Formato campo "Insertar noticia" del Google Form (sin cambios)
     # ─────────────────────────────────────────────────────────────
     def format_noticia_tabla(self, alert: dict, post: dict) -> str:
-        fecha        = alert.get("fecha_str") or datetime.now().strftime("%d-%m-%y")
+        fecha        = alert.get("fecha_str") or _now_peru("%d-%m-%y")
         region       = alert.get("region", "").upper().replace(" ", "_")
         provincia    = alert.get("provincia", "").upper().replace(" ", "_")
         distrito     = alert.get("distrito", "").upper().replace(" ", "_")
@@ -162,8 +167,7 @@ class AlertFormatter:
         """
         Retorna lista de celdas en el mismo orden que las columnas del Form + extras.
         """
-        from datetime import datetime as dt
-        now_str     = dt.now().strftime("%d/%m/%Y %H:%M:%S")
+        now_str     = _now_peru("%d/%m/%Y %H:%M:%S")
         email       = getattr(config, "EMAIL_SISTEMA", "protecta.dev@gmail.com") if config else "protecta.dev@gmail.com"
         operador    = getattr(config, "OPERADOR_AUTOMATICO", "Sistema Automático") if config else "Sistema Automático"
 
