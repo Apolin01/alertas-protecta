@@ -199,8 +199,7 @@ REGLA 3 — DEPARTAMENTOS Y CLIENTES (MAPA FIJO):
   ANCASH, HUANUCO, PASCO → cliente SIEMPRE "Antamina"
   CAJAMARCA              → cliente SIEMPRE "Bechtel / Newmont"  (incluye: Minera Yanacocha, Newmont, proyecto Conga, Gold Fields La Cima)
   LA LIBERTAD            → cliente SIEMPRE "Clientes Norte" — NUNCA "Bechtel / Newmont"
-  LORETO, UCAYALI        → cliente SIEMPRE "Petrotal"
-  JUNIN, AREQUIPA, PUNO, CUSCO → IGNORAR (salvo politica nacional)
+  HUANCAVELICA, JUNIN, AREQUIPA, PUNO, CUSCO → IGNORAR (salvo politica nacional)
 
 ═══════════════════════════════════════════════
 REGLA 4 — LIMA:

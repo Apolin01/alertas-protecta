@@ -10,6 +10,7 @@ que nunca tiene un event loop de asyncio.
 
 import os
 import re
+import time as _time_mod
 import logging
 import threading
 import queue as _queue
@@ -65,13 +66,21 @@ _ctx = None
 
 
 def _parse_cookies_txt(content: str) -> list[dict]:
-    """Convierte contenido de cookies.txt (formato Netscape) al formato de Playwright."""
+    """Convierte contenido de cookies.txt (formato Netscape) al formato de Playwright.
+
+    Tolera tabs (formato original) y multi-espacios (cuando Railway u otros
+    servicios convierten tabs al setear la variable de entorno).
+    """
     cookies = []
     for line in content.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+        # Tabs primero (formato Netscape canonico).
         parts = line.split("\t")
+        if len(parts) < 7:
+            # Fallback: cualquier secuencia de whitespace, max 7 campos
+            parts = re.split(r"\s+", line, maxsplit=6)
         if len(parts) < 7:
             continue
         domain, _, path_c, secure, expires, name, value = parts[:7]
@@ -108,20 +117,41 @@ def _load_cookies_txt(path: str) -> list[dict]:
     return []
 
 
-_session_expired = False  # bandera: sesión con cookies expiró, modo anónimo
+_session_expired    = False  # bandera: sesión con cookies expiró, modo anónimo
+_last_login_attempt = 0.0    # epoch del ultimo intento de re-login (cooldown)
+_LOGIN_COOLDOWN_S   = 600    # 10 min entre re-intentos para no martillar a FB
 
 
 def _mark_session_expired():
-    global _session_expired
-    if not _session_expired:
-        _session_expired = True
-        log.warning("[Scraper] Sesión FB expirada → limpiando cookies para modo anónimo real")
-        if _ctx:
-            try:
-                _ctx.clear_cookies()
-                log.info("[Scraper] Cookies limpiadas — próximas páginas como visitante anónimo")
-            except Exception as e:
-                log.debug(f"[Scraper] Error limpiando cookies: {e}")
+    """
+    Cookies caducaron: intenta re-login con FB_EMAIL/FB_PASSWORD.
+    Solo cae a modo anónimo si el re-login falla o se intentó hace < 10 min.
+    """
+    global _session_expired, _last_login_attempt
+
+    now = _time_mod.time()
+    if now - _last_login_attempt < _LOGIN_COOLDOWN_S:
+        if not _session_expired:
+            _session_expired = True
+            log.warning("[Scraper] Sesión expirada — modo anónimo (cooldown de re-login activo)")
+        return
+
+    _last_login_attempt = now
+    log.warning("[Scraper] Sesión FB expirada → intentando re-login automático...")
+
+    if _ctx:
+        try:
+            _ctx.clear_cookies()
+        except Exception as e:
+            log.debug(f"[Scraper] Error limpiando cookies: {e}")
+
+        if _do_login(_ctx):
+            log.info("[Scraper] ✓ Re-login exitoso — sesión renovada")
+            _session_expired = False
+            return
+
+    _session_expired = True
+    log.warning("[Scraper] Re-login falló — operando en modo anónimo hasta el próximo cooldown")
 
 
 def is_session_expired() -> bool:
