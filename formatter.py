@@ -106,29 +106,44 @@ class AlertFormatter:
 
     # ─────────────────────────────────────────────────────────────
     # FORMATO 2 — WHATSAPP
-    # *FECHA DEPARTAMENTO DISTRITO - KEYWORD1 - KEYWORD2 - KEYWORD3*
+    # *FECHA PROVINCIA DISTRITO - KEYWORD1 - KEYWORD2 - KEYWORD3*
     # Titulo y resumen - FUENTE: url
     #
-    # Reglas especiales:
-    #   - Si distrito == departamento → "CIUDAD DE DEPARTAMENTO"
-    #   - Si es NACIONAL → solo "NACIONAL" (sin redundancia)
+    # Reglas:
+    #   - Si provincia tiene nombre propio (≠ departamento) → mostrar provincia, NO dept
+    #     ej: ICA + PISCO + TUPAC AMARU → "PISCO TUPAC AMARU"
+    #         CAJAMARCA + JAEN + ... → "JAEN ..."
+    #         LIMA + BARRANCA + SUPE → "BARRANCA SUPE"
+    #   - Si provincia es igual al dept (o vacia) → usar dept como cabecera
+    #   - Si distrito == provincia → "CIUDAD DE PROVINCIA"
+    #   - Si es NACIONAL → solo "NACIONAL"
     #   - Keywords sin CamelCase: separados por " - "
-    #   - * literales visibles (negrita en WhatsApp)
     # ─────────────────────────────────────────────────────────────
     def format_whatsapp(self, alert: dict, post: dict, config=None) -> str:
         fecha = alert.get("fecha_str") or _now_peru("%d-%m-%y")
 
         dept = (alert.get("departamento") or "").upper().strip()
-        dist = (alert.get("distrito") or alert.get("provincia") or dept).upper().strip()
+        prov = (alert.get("provincia")    or "").upper().strip()
+        dist = (alert.get("distrito")     or "").upper().strip()
 
-        # Caso nacional: evitar redundancia "NACIONAL NACIONAL"
         if dept == "NACIONAL":
             ubicacion = "NACIONAL"
+        elif prov and prov != dept:
+            # Provincia con nombre propio → omitir departamento
+            if dist and dist != prov:
+                ubicacion = f"{prov} {dist}"
+            elif dist == prov:
+                ubicacion = f"CIUDAD DE {prov}"
+            else:
+                ubicacion = prov
         else:
-            # "CIUDAD DE X" cuando distrito tiene el mismo nombre que el departamento
-            if dist and dist == dept:
-                dist = f"CIUDAD DE {dept}"
-            ubicacion = f"{dept} {dist}".strip()
+            # Provincia vacia o igual al departamento → usar departamento
+            if dist and dist != dept:
+                ubicacion = f"{dept} {dist}"
+            elif dist and dist == dept:
+                ubicacion = f"CIUDAD DE {dept}"
+            else:
+                ubicacion = dept
 
         # Keywords: convertir CamelCase a palabras separadas, unir con " - "
         palabras = alert.get("palabras_clave", [])

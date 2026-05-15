@@ -4,6 +4,7 @@ Sistema de Alertas Protecta Peru
 - Envia al instante despues de cada pagina, sin esperar a que termine la region
 """
 
+import os
 import sys
 import io
 import time
@@ -11,6 +12,8 @@ import json
 import logging
 import threading
 from datetime import datetime, timezone, timedelta
+
+import requests
 
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -42,6 +45,19 @@ _ai_semaphore = threading.Semaphore(1)
 
 def now_peru() -> datetime:
     return datetime.now(timezone(timedelta(hours=-5)))
+
+
+def heartbeat(suffix: str = ""):
+    """Pinga al watchdog externo (healthchecks.io / UptimeRobot Heartbeat).
+    Si HEARTBEAT_URL no está configurado, no hace nada.
+    suffix opcional: '/start' al iniciar ciclo, '/fail' si falló."""
+    url = os.environ.get("HEARTBEAT_URL", "").strip()
+    if not url:
+        return
+    try:
+        requests.get(url + suffix, timeout=5)
+    except Exception as e:
+        log.debug(f"[Heartbeat] Falló ping: {e}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -306,6 +322,7 @@ def run_forever():
             f"Alertas enviadas: {ciclo_alertas} | Sesión FB: {sesion_status}\n"
             f"Esperando {config.DELAY_BETWEEN_CYCLES}s antes del siguiente ciclo...\n"
         )
+        heartbeat()  # avisa al watchdog que el ciclo terminó OK
         time.sleep(config.DELAY_BETWEEN_CYCLES)
 
 

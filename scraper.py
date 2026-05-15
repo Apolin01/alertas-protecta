@@ -292,6 +292,22 @@ def close_browser():
     _worker.run(_close)
 
 
+def _normalize_fb_url(href: str) -> str:
+    """
+    Convierte un href de Facebook en una URL absoluta navegable.
+      - Paths relativos (/posts/...) → https://www.facebook.com/posts/...
+      - story.php / permalink.php → conserva query (story_fbid es el ID del post)
+      - /posts/, /videos/, /reel/ → quita query (fbclid y tracking)
+    """
+    if not href:
+        return ""
+    if href.startswith("/"):
+        href = "https://www.facebook.com" + href
+    if "story.php" in href or "permalink.php" in href:
+        return href  # query params identifican el post
+    return href.split("?")[0]
+
+
 def _relative_to_iso(time_text: str) -> str:
     """Convierte '4 h', '2 d', '30 min', '2 sem', '3 mes' a ISO timestamp aproximado."""
     now = datetime.now(timezone.utc)
@@ -381,13 +397,13 @@ class FacebookScraper:
                         if re.match(r"^\d+\s*(min|h|d|sem|w|s)$", txt, re.IGNORECASE):
                             time_link = link
                             time_text = txt
-                            post_url  = href.split("?")[0]
+                            post_url  = _normalize_fb_url(href)
                             break
                         # Fecha absoluta FB: "14 de abr.", "5 mayo" → post >7 días → filtrar
                         if re.match(r"^\d{1,2}\s+(de\s+)?[a-z\xe1\xe9\xed\xf3\xfa\xfc]{3}", txt, re.IGNORECASE):
                             time_link = link
                             time_text = "30 d"  # forzar antiguo → descartado por max_age
-                            post_url  = href.split("?")[0]
+                            post_url  = _normalize_fb_url(href)
                             break
                         # Fallback modo anónimo: enlace directo a publicación
                         if not time_link and re.search(
@@ -395,7 +411,7 @@ class FacebookScraper:
                         ):
                             time_link = link
                             time_text = "1 h"   # asumir reciente
-                            post_url  = href.split("?")[0]
+                            post_url  = _normalize_fb_url(href)
 
                     if not time_link:
                         continue

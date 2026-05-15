@@ -21,39 +21,12 @@ class WhatsAppSender:
         self.provider = getattr(config, "WHATSAPP_PROVIDER", "simulate")
         self._twilio_client = None
 
-    def _get_twilio_client(self):
-        if self._twilio_client is None:
-            sid   = self.config.TWILIO_ACCOUNT_SID
-            token = self.config.TWILIO_AUTH_TOKEN
-            if not sid or not token:
-                raise ValueError("TWILIO_SID o TWILIO_TOKEN no están en .env")
-            self._twilio_client = TwilioClient(sid, token)
-        return self._twilio_client
-
     # ─────────────────────────────────────────────
     def send(self, group_name: str, message: str, image_url: str = "") -> bool:
         if self.provider == "simulate":
             return self._send_simulate(group_name, message, image_url)
         elif self.provider == "bridge":
             return self._send_bridge(group_name, message, image_url)
-        elif self.provider == "twilio":
-            phone = self.config.WHATSAPP_GROUPS.get(group_name)
-            if not phone:
-                log.warning(f"Grupo '{group_name}' no tiene número en WHATSAPP_GROUPS.")
-                return False
-            return self._send_twilio(phone, message, image_url)
-        elif self.provider == "callmebot":
-            phone = self.config.WHATSAPP_GROUPS.get(group_name)
-            if not phone:
-                log.warning(f"Grupo '{group_name}' no tiene número en WHATSAPP_GROUPS.")
-                return False
-            return self._send_callmebot(phone, message)
-        elif self.provider == "meta":
-            phone = self.config.WHATSAPP_GROUPS.get(group_name)
-            if not phone:
-                log.warning(f"Grupo '{group_name}' no tiene número en WHATSAPP_GROUPS.")
-                return False
-            return self._send_meta(phone, message, image_url)
         else:
             log.error(f"Provider desconocido: {self.provider}")
             return False

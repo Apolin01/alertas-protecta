@@ -2,19 +2,60 @@
 deduplicator.py — Evita enviar la misma noticia dos veces.
 
 Dos niveles de deduplicacion:
-  1. Por URL exacta del post (como antes)
+  1. Por URL exacta del post (tabla 'processed')
   2. Por similitud de contenido — si dos posts hablan del mismo hecho
-     (mismo departamento + misma subcategoria + texto similar en las ultimas 6h)
-     se considera duplicado aunque vengan de paginas distintas.
+     (mismo departamento + misma subcategoria + palabras_clave) o si el
+     titulo+resumen comparten >= 65% de palabras significativas (Jaccard)
+     en las ultimas 12h, se considera duplicado aunque vengan de paginas
+     distintas.
 """
 
 import os
+import re
 import hashlib
 import logging
+import unicodedata
 import psycopg2
 from datetime import datetime, timedelta
 
 log = logging.getLogger(__name__)
+
+# Umbral de similitud para considerar dos alertas como el mismo evento
+JACCARD_THRESHOLD = 0.65
+# Ventana de busqueda hacia atras para nivel 2
+DEDUP_WINDOW_HOURS = 12
+
+# Stopwords español + palabras frecuentes en titulares de noticias
+_STOPWORDS_ES = {
+    "el","la","los","las","de","del","en","a","y","o","u","un","una","unos","unas",
+    "que","se","por","con","para","su","sus","es","al","lo","como","mas","pero","le",
+    "ya","este","esta","estos","estas","fue","ha","han","hay","ser","son","muy",
+    "sin","sobre","tras","entre","donde","cuando","tambien","todo","todos","toda",
+    "todas","esto","eso","hace","hizo","tuvo","dijo","ante","ese","esa","esos","esas",
+    "sera","ser","fue","fui","tras","cada","otro","otra","otros","otras","desde",
+    "hasta","aun","aun","tan","ahi","alli","aqui","yo","tu","el","ella","nos",
+}
+
+
+def _strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+
+def _words_set(text: str) -> set:
+    """Tokeniza: lowercase, sin tildes, solo letras, sin stopwords, longitud >= 3."""
+    if not text:
+        return set()
+    norm = _strip_accents(text.lower())
+    words = re.findall(r"[a-z]+", norm)
+    return {w for w in words if len(w) >= 3 and w not in _STOPWORDS_ES}
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
 
 
 def _get_conn():
@@ -59,9 +100,15 @@ class Deduplicator:
                 subcategoria  TEXT,
                 cliente       TEXT,
                 resumen       TEXT,
+                titulo_norm   TEXT,
                 sent_at       TEXT
             )
         """)
+        # Migracion suave si la tabla ya existia sin titulo_norm
+        cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS titulo_norm TEXT")
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS sent_alerts_dept_idx ON sent_alerts (departamento, sent_at)"
+        )
         self.conn.commit()
         self._cleanup_old()
 
@@ -71,14 +118,16 @@ class Deduplicator:
 
     def _content_hash(self, alert: dict) -> str:
         """
-        Hash basado en departamento + primeras 40 letras del resumen.
-        Sin subcategoria: el mismo evento clasificado por dos paginas distintas
-        puede producir subcategorias diferentes, causando duplicados.
+        Hash exacto basado en estructura clasificada:
+        departamento + provincia + subcategoria + palabras_clave ordenadas.
+        Identifica el mismo evento cuando la IA mantiene categorias estables.
+        Para casos donde la IA varia, hay un segundo nivel (Jaccard).
         """
-        departamento = (alert.get("departamento") or "").upper().strip()
-        resumen_raw  = (alert.get("resumen_whatsapp") or "").lower()
-        resumen_norm = "".join(c for c in resumen_raw if c.isalnum())[:40]
-        key = f"{departamento}|{resumen_norm}"
+        dept = (alert.get("departamento") or "").upper().strip()
+        prov = (alert.get("provincia")    or "").upper().strip()
+        sub  = (alert.get("subcategoria") or "").upper().strip()
+        kws  = sorted(str(k).upper().strip() for k in (alert.get("palabras_clave") or []))
+        key  = f"{dept}|{prov}|{sub}|{'-'.join(kws)}"
         return hashlib.md5(key.encode("utf-8")).hexdigest()
 
     # ─────────────────────────────────────────────
@@ -106,29 +155,65 @@ class Deduplicator:
     # ─────────────────────────────────────────────
     # DEDUP DE ALERTAS (nivel 2 — por contenido)
     # ─────────────────────────────────────────────
-    def is_duplicate_alert(self, alert: dict, window_hours: int = 6) -> bool:
+    def is_duplicate_alert(self, alert: dict, window_hours: int = DEDUP_WINDOW_HOURS) -> bool:
         """
         Retorna True si ya se envio una alerta similar en las ultimas N horas.
-        'Similar' = mismo departamento + misma subcategoria + resumen parecido.
+
+        Dos niveles:
+          A) Hash exacto sobre (departamento, provincia, subcategoria, palabras_clave).
+          B) Si A no matchea, comparar Jaccard del titulo+resumen contra alertas
+             del mismo departamento en la ventana. >= 0.65 → duplicado.
         """
         ch = self._content_hash(alert)
         cutoff = (datetime.now() - timedelta(hours=window_hours)).isoformat()
         cur = self._cursor()
+
+        # Nivel A: hash exacto
         cur.execute(
             "SELECT 1 FROM sent_alerts WHERE content_hash = %s AND sent_at > %s",
             (ch, cutoff)
         )
-        return cur.fetchone() is not None
+        if cur.fetchone():
+            return True
+
+        # Nivel B: similitud Jaccard sobre titulo+resumen del mismo departamento
+        dept = (alert.get("departamento") or "").upper().strip()
+        if not dept:
+            return False
+
+        texto_nuevo = f"{alert.get('titulo','')} {alert.get('resumen_whatsapp','')}"
+        set_nuevo = _words_set(texto_nuevo)
+        if len(set_nuevo) < 4:
+            # Muy pocas palabras significativas → no es fiable comparar
+            return False
+
+        cur.execute(
+            "SELECT titulo_norm FROM sent_alerts WHERE departamento = %s AND sent_at > %s",
+            (dept, cutoff)
+        )
+        for (titulo_norm,) in cur.fetchall():
+            if not titulo_norm:
+                continue
+            set_existente = set(titulo_norm.split())
+            score = _jaccard(set_nuevo, set_existente)
+            if score >= JACCARD_THRESHOLD:
+                log.info(
+                    f"[Dedup] Jaccard={score:.2f} ≥ {JACCARD_THRESHOLD} en {dept} → duplicado"
+                )
+                return True
+        return False
 
     def mark_alert_sent(self, alert: dict):
         """Registra una alerta como enviada para dedup de contenido."""
         ch = self._content_hash(alert)
+        texto = f"{alert.get('titulo','')} {alert.get('resumen_whatsapp','')}"
+        titulo_norm = " ".join(sorted(_words_set(texto)))[:500]
         try:
             cur = self._cursor()
             cur.execute(
                 """INSERT INTO sent_alerts
-                   (content_hash, departamento, subcategoria, cliente, resumen, sent_at)
-                   VALUES (%s, %s, %s, %s, %s, %s)
+                   (content_hash, departamento, subcategoria, cliente, resumen, titulo_norm, sent_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT DO NOTHING""",
                 (
                     ch,
@@ -136,6 +221,7 @@ class Deduplicator:
                     alert.get("subcategoria", ""),
                     alert.get("cliente", ""),
                     alert.get("resumen_whatsapp", "")[:120],
+                    titulo_norm,
                     datetime.now().isoformat()
                 )
             )
@@ -149,7 +235,7 @@ class Deduplicator:
     # ─────────────────────────────────────────────
     def _cleanup_old(self):
         cutoff = (datetime.now() - timedelta(days=7)).isoformat()
-        cutoff_alerts = (datetime.now() - timedelta(hours=12)).isoformat()
+        cutoff_alerts = (datetime.now() - timedelta(hours=24)).isoformat()
         cur = self._cursor()
         cur.execute("DELETE FROM processed WHERE seen_at < %s", (cutoff,))
         cur.execute("DELETE FROM sent_alerts WHERE sent_at < %s", (cutoff_alerts,))

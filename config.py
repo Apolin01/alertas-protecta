@@ -577,31 +577,12 @@ class Config:
     POSTS_PER_PAGE = 8
     WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "bridge")
 
-  
-    TWILIO_ACCOUNT_SID   = os.getenv("TWILIO_SID",   "ACd4718f21aa899daaf3e28002510cc326")
-    TWILIO_AUTH_TOKEN    = os.getenv("TWILIO_TOKEN",  "")   # ← poner en .env
-    TWILIO_WHATSAPP_FROM = "whatsapp:+14155238886"           # sandbox Twilio
-    # Para producción: cambiar al número Twilio aprobado por Meta
-
 
     # ─────────────────────────────────────────────
     # WHATSAPP BRIDGE (whatsapp-web.js)
     # ─────────────────────────────────────────────
     BRIDGE_URL   = os.getenv("BRIDGE_URL",   "http://localhost:3000")
     BRIDGE_TOKEN = os.getenv("BRIDGE_TOKEN", "protecta2026")
-
-
-    WHATSAPP_GROUPS = {
-        # Numero de prueba (sandbox Twilio) — reemplazar por numeros reales de cada grupo
-        "Antamina":               "+51932570706",
-        "Bechtel / Newmont":      "+51932570706",
-        "Clientes Sur":           "+51932570706",
-        "Clientes Norte":         "+51932570706",
-        "Agrícola Santa Azul":    "+51932570706",
-        "Pisco":                  "+51932570706",
-        "Petrotal":               "+51932570706",
-        "Coyuntura Nacional":     "+51932570706",
-    }
 
     # ─────────────────────────────────────────────
     # GOOGLE SHEETS — mismo Sheets del Google Form

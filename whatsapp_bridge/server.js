@@ -30,6 +30,8 @@ const AUTH_TOKEN = process.env.BRIDGE_TOKEN || "protecta2026";
 const DATA_PATH  = process.env.WA_DATA_PATH || "/app";
 const AUTH_DIR   = path.join(DATA_PATH, ".wwebjs_auth", "baileys_auth");
 const CACHE_FILE = path.join(DATA_PATH, ".wwebjs_auth", "groupcache.json");
+const HEARTBEAT_URL      = (process.env.BRIDGE_HEARTBEAT_URL || "").trim();
+const HEARTBEAT_EVERY_MS = 60_000;
 
 const GROUP_MAP = {
     "Antamina":                     "GII - Antamina - Protecta Perú",
@@ -225,6 +227,26 @@ async function startSock() {
 }
 
 startSock().catch(e => console.error("Error iniciando Baileys:", e));
+
+// ─────────────────────────────────────────────
+// HEARTBEAT externo (healthchecks.io / UptimeRobot Heartbeat)
+// Solo pinga cuando WhatsApp está conectado. Si el bridge muere,
+// se apaga la PC, o WhatsApp se desconecta > N min, el watchdog avisa.
+// ─────────────────────────────────────────────
+if (HEARTBEAT_URL) {
+    setInterval(() => {
+        if (!isReady) return;
+        const lib = HEARTBEAT_URL.startsWith("https") ? require("https") : require("http");
+        try {
+            const req = lib.get(HEARTBEAT_URL, res => res.resume());
+            req.on("error", err => console.log(`[Heartbeat] error: ${err.message}`));
+            req.setTimeout(5000, () => req.destroy());
+        } catch (e) {
+            console.log(`[Heartbeat] excepción: ${e.message}`);
+        }
+    }, HEARTBEAT_EVERY_MS);
+    console.log(`[Heartbeat] activo → ${HEARTBEAT_URL} cada ${HEARTBEAT_EVERY_MS/1000}s (solo si WA conectado)`);
+}
 
 // ─────────────────────────────────────────────
 // SERVIDOR HTTP

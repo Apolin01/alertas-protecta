@@ -34,6 +34,64 @@ def is_lima_valida(alert: dict) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────
+# MAPA DURO: CIUDAD → DEPARTAMENTO CORRECTO
+# Si la IA pone "Chimbote en La Libertad", aqui se corrige.
+# Las keys deben estar SIN TILDES y en MAYUSCULAS.
+# ─────────────────────────────────────────────────────────────
+CITY_TO_DEPT = {
+    # ── ANCASH ──
+    "CHIMBOTE": "ANCASH", "HUARAZ": "ANCASH", "CASMA": "ANCASH",
+    "CARAZ": "ANCASH", "HUARI": "ANCASH", "HUARMEY": "ANCASH",
+    "RECUAY": "ANCASH", "CARHUAZ": "ANCASH", "YUNGAY": "ANCASH",
+    "AIJA": "ANCASH", "BOLOGNESI": "ANCASH", "PALLASCA": "ANCASH",
+    "POMABAMBA": "ANCASH", "SAN MARCOS": "ANCASH", "CHAVIN": "ANCASH",
+    "CATAC": "ANCASH", "SANTA": "ANCASH", "NUEVO CHIMBOTE": "ANCASH",
+    # ── LA LIBERTAD ──
+    "TRUJILLO": "LA LIBERTAD", "VIRU": "LA LIBERTAD", "CHAO": "LA LIBERTAD",
+    "ASCOPE": "LA LIBERTAD", "OTUZCO": "LA LIBERTAD", "PATAZ": "LA LIBERTAD",
+    "LAREDO": "LA LIBERTAD", "CHEPEN": "LA LIBERTAD", "PACASMAYO": "LA LIBERTAD",
+    "SANCHEZ CARRION": "LA LIBERTAD", "HUAMACHUCO": "LA LIBERTAD",
+    # ── CAJAMARCA ──
+    "CAJABAMBA": "CAJAMARCA", "CELENDIN": "CAJAMARCA", "JAEN": "CAJAMARCA",
+    "BAMBAMARCA": "CAJAMARCA", "CHOTA": "CAJAMARCA", "HUALGAYOC": "CAJAMARCA",
+    "SAN IGNACIO": "CAJAMARCA", "CUTERVO": "CAJAMARCA",
+    # ── ICA ──
+    "CHINCHA": "ICA", "NASCA": "ICA", "NAZCA": "ICA", "PALPA": "ICA",
+    "PISCO": "ICA",
+    # ── LIMA (provincias rurales OK) ──
+    "BARRANCA": "LIMA", "SUPE": "LIMA", "HUAURA": "LIMA", "HUARAL": "LIMA",
+    # ── HUANUCO ──
+    "TINGO MARIA": "HUANUCO", "LEONCIO PRADO": "HUANUCO",
+    # ── PASCO ──
+    "CERRO DE PASCO": "PASCO", "OXAPAMPA": "PASCO",
+}
+
+
+def fix_dept_by_city(alert: dict) -> dict:
+    """
+    Si distrito/provincia es una ciudad conocida pero el departamento de la IA
+    no coincide, se fuerza el departamento correcto. Corrige errores como
+    "CHIMBOTE en LA LIBERTAD" → "CHIMBOTE en ANCASH".
+    """
+    prov = (alert.get("provincia") or "").upper().strip()
+    dist = (alert.get("distrito")  or "").upper().strip()
+    dept_actual = (alert.get("departamento") or "").upper().strip()
+
+    for ciudad in (dist, prov):
+        if not ciudad:
+            continue
+        dept_correcto = CITY_TO_DEPT.get(ciudad)
+        if dept_correcto and dept_correcto != dept_actual:
+            log.info(
+                f"Departamento corregido: IA dijo '{dept_actual}' "
+                f"pero ciudad '{ciudad}' → '{dept_correcto}'"
+            )
+            alert["departamento"] = dept_correcto
+            return alert
+    return alert
+
+
+# ─────────────────────────────────────────────────────────────
 # MAPA DURO: DEPARTAMENTO → CLIENTE CORRECTO
 # Si la IA se equivoca, este mapa lo corrige
 # ─────────────────────────────────────────────────────────────
@@ -45,29 +103,99 @@ DEPT_TO_CLIENT = {
     "LORETO":        "Petrotal",
     "UCAYALI":       "Petrotal",
     "LA LIBERTAD":   "Clientes Norte",   # Trujillo, Virú, Pataz → NUNCA Bechtel
-    # ICA tiene multiples clientes, la IA decide
+    # ICA tiene multiples clientes, ver PROVINCIA_TO_CLIENT
 }
+
+
+# ─────────────────────────────────────────────────────────────
+# MAPA DURO: PROVINCIA/DISTRITO → CLIENTE (mas granular que DEPT)
+# ICA tiene multiples clientes: Pisco va al grupo Pisco; Chincha/Nasca/Palpa/Ica
+# van a Clientes Sur. Lima costera (Barranca/Supe/Huaura) → Santa Azul.
+# Las keys deben ir SIN TILDES y en MAYUSCULAS.
+# ─────────────────────────────────────────────────────────────
+PROVINCIA_TO_CLIENT = {
+    "PISCO":    "Pisco",
+    "CHINCHA":  "Clientes Sur",
+    "NASCA":    "Clientes Sur",
+    "NAZCA":    "Clientes Sur",
+    "PALPA":    "Clientes Sur",
+    "ICA":      "Clientes Sur",            # provincia Ica (no la de Pisco)
+    "BARRANCA": "Agrícola Santa Azul",
+    "SUPE":     "Agrícola Santa Azul",
+    "HUAURA":   "Agrícola Santa Azul",
+    "HUARMEY":  "Agrícola Huarmey",
+}
+
+
+def fix_client_by_provincia(alert: dict) -> dict:
+    """
+    Corrige el cliente cuando la provincia/distrito identifica una zona
+    con cliente especifico (mas granular que el mapa por departamento).
+    Ej.: provincia CHINCHA → "Clientes Sur" aunque la IA haya dicho "Pisco".
+    """
+    provincia = (alert.get("provincia") or "").upper().strip()
+    distrito  = (alert.get("distrito")  or "").upper().strip()
+
+    for zona in (provincia, distrito):
+        if not zona:
+            continue
+        cliente_correcto = PROVINCIA_TO_CLIENT.get(zona)
+        if cliente_correcto:
+            cliente_actual = alert.get("cliente", "")
+            if cliente_actual != cliente_correcto:
+                log.info(
+                    f"Cliente corregido por provincia: IA dijo '{cliente_actual}' "
+                    f"pero '{zona}' → '{cliente_correcto}'"
+                )
+                alert["cliente"] = cliente_correcto
+            return alert
+    return alert
 
 def fix_client_by_dept(alert: dict) -> dict:
     """
     Correccion dura: si el departamento tiene un cliente unico conocido
     y la IA puso otro, lo corregimos.
     Tambien limpia campos vacios con texto tipo NO ESPECIFICA.
+    Y aplica una regla estricta: CRIT/ALRT sin ubicacion granular → IGNORAR.
     """
-    departamento = (alert.get("departamento") or "").upper().strip()
-
     # Limpiar campos con texto NO ESPECIFICA / NO ESPECIFICADO / DESCONOCIDO
     for campo in ["provincia", "distrito", "region"]:
         val = (alert.get(campo) or "").upper().strip()
         if any(x in val for x in ["NO ESPECIF", "DESCONOC", "NO INDICA", "NO MENC"]):
             alert[campo] = ""
 
-    # Si no hay departamento claro → IGNORAR
+    departamento = (alert.get("departamento") or "").upper().strip()
+    provincia    = (alert.get("provincia")    or "").upper().strip()
+    distrito     = (alert.get("distrito")     or "").upper().strip()
+    nivel        = alert.get("nivel", "")
+    categoria    = (alert.get("categoria") or "").lower()
+    es_politica  = "coyuntura politica" in categoria
+
+    # ── REGLA DE UBICACION OBLIGATORIA ──
+    # Cualquier CRIT/ALRT que no sea coyuntura politica nacional, REQUIERE
+    # departamento Y al menos provincia o distrito especifico (distinto del dept).
+    if nivel in ("CRIT", "ALRT") and not es_politica:
+        if not departamento or "NACIONAL" in departamento or any(
+            x in departamento for x in ["NO ESPECIF", "DESCONOC", "NO INDICA"]
+        ):
+            log.info(f"{nivel} sin departamento ('{departamento}') no-politico → IGNORAR")
+            alert["nivel"] = "IGNORAR"
+            return alert
+        # Si solo hay departamento sin granularidad (prov/dist iguales o vacios) → IGNORAR
+        sin_prov = not provincia or provincia == departamento
+        sin_dist = not distrito  or distrito  == provincia or distrito == departamento
+        if sin_prov and sin_dist:
+            log.info(
+                f"{nivel} sin granularidad ({departamento}/{provincia}/{distrito}) → IGNORAR"
+            )
+            alert["nivel"] = "IGNORAR"
+            return alert
+
+    # Si no hay departamento → IGNORAR salvo coyuntura nacional explicita
     if not departamento or any(x in departamento for x in [
         "NO ESPECIF", "DESCONOC", "NACIONAL", "NO INDICA"
     ]):
-        # Solo ignorar si el cliente tampoco es Coyuntura
-        if alert.get("cliente") not in ["Ninguno (Coyuntura Nacional)"]:
+        if alert.get("cliente") not in ["Ninguno (Coyuntura Nacional)"] or not es_politica:
             log.info(f"Sin departamento claro ('{departamento}') → forzando IGNORAR")
             alert["nivel"] = "IGNORAR"
         return alert
@@ -87,7 +215,7 @@ def fix_client_by_dept(alert: dict) -> dict:
     if alert.get("provincia") == "":
         # region solo con departamento
         alert["region"] = departamento
-    
+
     return alert
 
 
@@ -108,7 +236,7 @@ SYSTEM_PROMPT = """Eres un clasificador de alertas operacionales para Protecta P
   "distrito":    "<MAYUS SIN TILDES. Si no se menciona: mismo que provincia. Si nacional: ''>",
   "fecha_str": "<DD-MM-AA>",
   "categoria": "<una de las 6 categorias>",
-  "palabras_clave": ["<max 3>"],
+  "palabras_clave": ["<EXACTAMENTE 3 — nunca menos>"],
   "titulo": "<titular>",
   "resumen_whatsapp": "<max 2 oraciones, telegrama, sin emojis>",
   "subcategoria": "<MAYUSCULAS-CON-GUIONES>",
@@ -123,7 +251,8 @@ CATEGORIAS (usar EXACTAMENTE estos nombres):
 - Protestas, Paros y Bloqueos: protestas, paros, bloqueos, huelgas
 - Seguridad y delincuencia: detenciones, bandas, robos, homicidios, extorsion, violencia, balaceras
 
-PALABRAS_CLAVE (MAX 3):
+PALABRAS_CLAVE (SIEMPRE 3 — obligatorio):
+NUNCA devuelvas menos de 3.
 Preferentes (usar si aplica): DETENCION, HOMICIDIO, SEGURIDAD, AGRO, AGRICULTORES, AGUA, MEDIOAMBIENTE, SOCIAL, POLITICA, SALUD, DENGUE, FENOMENO DEL NINO, ECONOMIA, EXPORTACIONES.
 - Una palabra: MAYUSCULAS normales (HOMICIDIO, AGUA, SEGURIDAD).
 - Compuestas o frases: CamelCase (PozoDeAgua, ObrasPorImpuesto, NuevosRiegos).
@@ -175,8 +304,8 @@ REGLA 7 — EMPRESA CLIENTE NOMBRADA EXPLICITAMENTE: minimo ALRT y agregar a pal
   Agro Norte (La Libertad/costa): CASA GRANDE, DANPER, MISSION, HORTIFRUT, GREEN PERU, HASS PERU, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA FRUIT, LAREDO, ADAS, CAMPO ANDINO.
 
 NIVELES:
-- CRIT: homicidios, balaceras, denuncias a empresas cliente, bloqueos de operaciones, explosivos, derrames, secuestros, feminicidios.
-- ALRT: accidentes en vias, huaicos, derrumbes, cortes de via, huelgas, incendios, robos a empresas, protestas, detencion de dirigentes.
+- CRIT: homicidios, balaceras, denuncias a empresas cliente, bloqueos de operaciones, explosivos, derrames, secuestros, feminicidios, mineria ilegal (operativos, conflictos, denuncias).
+- ALRT: accidentes en vias, huaicos, derrumbes, cortes de via, huelgas, incendios, robos a empresas, protestas, detencion de dirigentes, detenciones por extorsion / robo / delitos comunes.
 - INFO: inauguraciones, inversiones, avances de obra, reuniones con comunidades, produccion positiva, acuerdos, proyectos, politica regional.
 - IGNORAR: deportes, farandula, publicidad, sin impacto operacional, fuera de zonas de operacion, sin ubicacion clara.
 
@@ -264,8 +393,12 @@ class AlertClassifier:
                 alert["nivel"]  = "IGNORAR"
                 alert["cliente"] = "Ninguno (Coyuntura Nacional)"
 
-            # Correccion dura por departamento + limpiar NO ESPECIFICA
+            # Correccion dura ciudad→departamento ANTES de validar
+            alert = fix_dept_by_city(alert)
+            # Correccion dura por departamento + limpiar NO ESPECIFICA + filtro ubicacion
             alert = fix_client_by_dept(alert)
+            # Correccion fina por provincia/distrito (mas granular que dept)
+            alert = fix_client_by_provincia(alert)
 
             alert["source_url"]  = post.get("url", "")
             alert["source_page"] = post.get("source_page", "")
