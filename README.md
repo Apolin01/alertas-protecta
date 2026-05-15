@@ -244,23 +244,125 @@ Los 20 clientes del sistema coinciden exactamente con el dropdown del Google For
 
 ### Mensaje WhatsApp
 ```
-*ALRT 🟡* - 14-03-26 CAJAMARCA JAEN - POLITICA - GOBIERNO
+*ALRT 🟡* - 15-05-26 CAJAMARCA JAEN - POLITICA - GOBIERNO
 Presidente Balcazar se reune con ronderos en Jaen para escuchar demandas y evaluar desarrollo rural.
 - FUENTE: https://facebook.com/post/...
 ```
 
 ```
-*CRIT 🔴* - 09-03-26 LIMA BARRANCA SUPE - SEGURIDAD - BALACERA
+*CRIT 🔴* - 10-05-26 LIMA BARRANCA SUPE - SEGURIDAD - BALACERA
 Se reportan disparos durante una despedida fúnebre en El Porvenir. Heridos en la escena, policía acude al lugar.
 - FUENTE: https://facebook.com/post/...
 ```
 
 ### Fila en Google Sheets (Tabla_Informacion)
 ```
-22/03/2026 14:35:00 | protecta.dev@gmail.com | Agrícola Santa Azul | Agroindustria |
-Medio | https://... | 09-03-26_LIMA_BARRANCA_SUPE_Seguridad_Balacera_Se reportan... |
+15/05/2026 14:35:00 | protecta.dev@gmail.com | Agrícola Santa Azul | Agroindustria |
+Medio | https://... | 10-05-26_LIMA_BARRANCA_SUPE_Seguridad_Balacera_Se reportan... |
 Sistema Automático | Incidente | CRIT | LIMA BARRANCA | LIMA | BARRANCA | SUPE | ...
 ```
+
+---
+
+## Lógica del Sistema y Cómo Funciona
+
+El sistema de alertas de Protecta Perú es un proceso automatizado que monitorea páginas de Facebook, clasifica noticias relevantes usando IA, y distribuye alertas a grupos de WhatsApp y Google Sheets según el cliente y región afectados. A continuación, se detalla la lógica completa paso a paso.
+
+### Arquitectura General
+
+El sistema sigue un flujo secuencial:
+
+1. **Recolección** (Scraping): Obtiene posts de Facebook vía Apify.
+2. **Deduplicación**: Evita procesar noticias ya enviadas usando una base de datos SQLite.
+3. **Clasificación**: Usa IA (Claude, OpenAI, etc.) para analizar el contenido y asignar nivel, cliente, región, etc.
+4. **Enrutamiento**: Determina a qué grupos de WhatsApp enviar basado en el cliente.
+5. **Formateo**: Genera mensajes para WhatsApp y filas para Google Sheets.
+6. **Envío**: Distribuye las alertas inmediatamente después de procesar cada página.
+
+El sistema corre en un loop infinito, rotando entre regiones (Antamina, Bechtel, Clientes Sur, etc.) y procesando páginas en lotes para equilibrar la carga y evitar sobrecargar Apify.
+
+### Componentes Principales
+
+#### 1. Configuración (`config.py`)
+- **Regiones y rotación**: El sistema rota entre 7 regiones en orden fijo: Antamina, Bechtel / Newmont, Clientes Sur, Clientes Norte, Agrícola Santa Azul, Pisco, Coyuntura Nacional.
+- **Páginas de Facebook**: Más de 200 páginas mapeadas a clientes/regiones (ej. páginas de Ancash → Antamina).
+- **Clientes válidos**: 20 clientes como Antamina, Bechtel, Agrícola Santa Azul, etc., que coinciden con el dropdown del Google Form.
+- **Mapeos**:
+  - Región → Cliente (ej. ANCASH → Antamina).
+  - Cliente → Grupo WhatsApp (ej. Antamina → grupo "Antamina").
+  - Cliente → Rubro (ej. Antamina → Minería).
+- **Límites**: 500 páginas por turno de región, 2 segundos de delay entre páginas, timeout de 45 segundos por página.
+
+#### 2. Scraping (`scraper.py`)
+- Usa Apify (API externa) para extraer posts de Facebook, ya que Facebook bloquea scrapers directos.
+- Obtiene hasta 8 posts por página.
+- Filtra posts sin texto o que son solo videos sin descripción.
+- Retorna datos como texto, URL, fecha, imagen, etc.
+- Si no hay token Apify, usa posts de prueba internos para simulación.
+
+#### 3. Deduplicación (`deduplicator.py`)
+- Usa SQLite (`alertas_dedup.db`) para almacenar hashes de URLs y alertas enviadas.
+- Genera un hash único por alerta (basado en cliente, nivel, subcategoría, etc.).
+- Evita reenviar la misma noticia si ya fue procesada.
+- Marca alertas como enviadas después del envío exitoso.
+
+#### 4. Clasificación (`classifier.py`)
+- **IA usada**: Claude (Anthropic), OpenAI, Gemini o Groq. Configurable en `AI_PROVIDER`.
+- **Prompt detallado**: Incluye reglas estrictas para niveles, clientes, ubicaciones, etc.
+- **Niveles de alerta**:
+  - **CRIT 🔴**: Homicidios, balaceras, denuncias a clientes, bloqueos, derrames tóxicos, secuestros.
+  - **ALRT 🟡**: Accidentes en vías, huaicos, huelgas, incendios, robos.
+  - **INFO 🟢**: Inauguraciones, inversiones, reuniones positivas.
+  - **IGNORAR**: Sin impacto operacional, fuera de zonas, deportes, etc.
+- **Correcciones duras**:
+  - Mapea ciudades a departamentos correctos (ej. Chimbote → Ancash).
+  - Fuerza cliente por departamento (ej. Cajamarca → Bechtel).
+  - Filtro Lima: Solo procesa si menciona Barranca, Supe, Huaura, Huaral.
+  - Regla de ubicación obligatoria: CRIT/ALRT requieren departamento + provincia/distrito.
+- **Salida JSON**: Nivel, cliente, rubro, relevancia, tipo, región, departamento, provincia, distrito, fecha, categoría, palabras clave (siempre 3), título, resumen WhatsApp, subcategoría, tags.
+- **Categorías fijas**: Agro-Agua-Medioambiente, Coyuntura Social, Coyuntura Política, Economía-Desarrollo, Protestas-Paros-Bloqueos, Seguridad-Delincuencia.
+
+#### 5. Enrutamiento (`router.py`)
+- Basado en el cliente clasificado, mapea a grupos WhatsApp.
+- Ej. Cliente "Antamina" → grupo "Antamina".
+- Si no hay mapeo exacto, busca coincidencias parciales.
+- Retorna lista de grupos (generalmente uno por cliente).
+
+#### 6. Formateo (`formatter.py`)
+- **WhatsApp**: Mensaje con emoji de nivel, fecha, región, subcategoría, resumen (máx. 2 oraciones), fuente (URL acortada).
+  - Ej: `*ALRT 🟡* - 15-05-26 CAJAMARCA JAEN - POLITICA - GOBIERNO Presidente Balcazar se reúne... - FUENTE: https://...`
+- **Google Sheets**: Fila con columnas del Form (marca temporal, email, cliente, rubro, relevancia, link, noticia en formato tabla, operador, tipo, + metadatos).
+  - Formato tabla: `FECHA_DEPARTAMENTO_PROVINCIA_DISTRITO_CATEGORIA_PALABRAS-CLAVE_TITULO` (separado por _).
+
+#### 7. Envío
+- **WhatsApp** (`sender_whatsapp.py`): Usa un "bridge" (servidor Node.js con whatsapp-web.js) para enviar mensajes a grupos. Soporta CallMeBot, Meta API, Twilio.
+- **Sheets** (`sender_sheets.py`): Inserta filas en Google Sheets usando Service Account. Solo si `SHEETS_ENABLED=true`.
+- **Cola de alertas** (`alert_queue.py`): Almacena mensajes pendientes en SQLite. Reintenta envíos fallidos (últimas 4 horas).
+
+#### 8. Loop Principal (`main.py`)
+- **Rotación por región**: Procesa páginas en lotes de 500 por región, avanzando offset para cubrir todas.
+- **Envío inmediato**: Después de procesar cada página, envía alertas pendientes.
+- **Reintentos**: Al inicio de cada ciclo, reintenta alertas no enviadas por fallos previos.
+- **Heartbeat**: Ping a UptimeRobot/healthchecks.io para monitoreo.
+- **Ciclos**: Cada 5 minutos (configurable), indefinidamente.
+- **Manejo de errores**: Logs detallados, continúa si una página falla.
+
+### Lógica de Procesamiento por Página
+1. Scrapea posts de la página.
+2. Para cada post:
+   - Verifica duplicados.
+   - Clasifica con IA (si no IGNORAR).
+   - Determina grupos WhatsApp.
+   - Formatea mensajes.
+   - Encola para envío.
+3. Envía inmediatamente todas las alertas de esa página.
+4. Limpia cola antigua (>2 días).
+
+### Seguridad y Validaciones
+- **Filtros duros**: Ignora posts sin ubicación clara, fuera de zonas operativas, o con niveles bajos sin impacto.
+- **Correcciones**: IA puede equivocarse en ubicaciones; el sistema corrige con mapas fijos.
+- **Límites**: Semáforo para IA (1 concurrente), locks para envío.
+- **Archivos sensibles**: `.env`, `credentials.json`, `alertas_dedup.db` no se suben a git.
 
 ---
 
