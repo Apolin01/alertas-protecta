@@ -133,7 +133,7 @@ class AlertFormatter:
             if dist and dist != prov:
                 ubicacion = f"{prov} {dist}"
             elif dist == prov:
-                ubicacion = f"CIUDAD DE {prov}"
+                ubicacion = f"{prov}"
             else:
                 ubicacion = prov
         else:
@@ -141,7 +141,7 @@ class AlertFormatter:
             if dist and dist != dept:
                 ubicacion = f"{dept} {dist}"
             elif dist and dist == dept:
-                ubicacion = f"CIUDAD DE {dept}"
+                ubicacion = f"{dept}"
             else:
                 ubicacion = dept
 
