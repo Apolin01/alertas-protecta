@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+*.log
+*.db
+alertas.log
+credentials.json
+whatsapp_bridge/.wwebjs_auth/
+whatsapp_bridge/.wwebjs_cache/
+whatsapp_bridge/node_modules/
+start_alertas.bat
+BD_Matriz.xlsx
+cookies.txt
+fb_session/
