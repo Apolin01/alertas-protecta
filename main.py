@@ -48,6 +48,15 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# Webhooks (opcional)
+try:
+    from webhook_server import WebhookServer, process_webhook_queue, webhook_queue
+    WEBHOOKS_AVAILABLE = True
+except ImportError as e:
+    log.warning(f"[INIT] webhook_server no disponible: {e}")
+    log.warning("[INIT] Instala Flask: pip install flask>=2.3.0")
+    WEBHOOKS_AVAILABLE = False
+
 _send_lock    = threading.Lock()
 _ai_semaphore = threading.Semaphore(1)
 
@@ -345,6 +354,24 @@ def run_forever():
     if isinstance(fetcher, str):  # fallback
         fetcher = Fetcher(config)
     
+    # ─────────────────────────────────────────────────────────────
+    # INICIAR WEBHOOK SERVER (si está habilitado)
+    # ─────────────────────────────────────────────────────────────
+    webhook_thread = None
+    if WEBHOOKS_AVAILABLE and config.WEBHOOKS_ENABLED:
+        try:
+            log.info("[WEBHOOKS] Iniciando servidor webhook...")
+            webhook_server = WebhookServer(
+                host=config.WEBHOOK_HOST,
+                port=config.WEBHOOK_PORT,
+                secret=config.WEBHOOK_SECRET
+            )
+            webhook_thread = webhook_server.run_in_thread()
+            time.sleep(1)  # Esperar a que suba el servidor
+            log.info(f"[WEBHOOKS] ✓ Servidor escuchando en {config.WEBHOOK_HOST}:{config.WEBHOOK_PORT}")
+        except Exception as e:
+            log.error(f"[WEBHOOKS] Error iniciando servidor: {e}")
+    
     # Determinar qué iterar según modo
     if config.USE_RSS_FEED:
         items_to_process = get_clients_for_rss()
@@ -365,6 +392,8 @@ def run_forever():
     if not config.USE_RSS_FEED:
         log.info(f"Paginas por region por turno: {config.PAGES_PER_REGION_TURN}")
     log.info(f"Intervalo de ciclo: {config.INTERVAL_MINUTES} minutos")
+    if WEBHOOKS_AVAILABLE and config.WEBHOOKS_ENABLED:
+        log.info(f"Webhooks: ✓ HABILITADOS ({config.WEBHOOK_HOST}:{config.WEBHOOK_PORT})")
     log.info("=" * 60)
 
     ciclo   = 0
@@ -378,6 +407,57 @@ def run_forever():
             f"CICLO {ciclo} — {now_peru().strftime('%d-%m-%Y %H:%M')} PE\n"
             f"{'='*60}"
         )
+
+        # ─────────────────────────────────────────────────────────────
+        # PROCESAR WEBHOOKS (si hay)
+        # ─────────────────────────────────────────────────────────────
+        if WEBHOOKS_AVAILABLE and config.WEBHOOKS_ENABLED:
+            webhook_count = webhook_queue.qsize()
+            if webhook_count > 0:
+                log.info(f"[WEBHOOKS] {webhook_count} evento(s) pendiente(s)")
+                
+                def process_webhook_post(post):
+                    """Procesa un post del webhook igual que uno normal."""
+                    if post.get("is_video") and not post.get("text"):
+                        return
+                    if not post.get("text", "").strip():
+                        return
+                    
+                    preview = post.get("text", "")[:100].replace("\n", " ")
+                    log.info(f"[WEBHOOK] Clasificando: {preview}...")
+                    
+                    with _ai_semaphore:
+                        time.sleep(1)
+                        alert = classifier.classify(post)
+                    
+                    if not alert:
+                        log.info(f"[WEBHOOK] Sin respuesta del clasificador")
+                        return
+                    
+                    nivel = alert.get("nivel", "IGNORAR")
+                    if nivel == "IGNORAR":
+                        log.info(f"[WEBHOOK] Ignorado")
+                        return
+                    
+                    if dedup.is_duplicate_alert(alert):
+                        log.info(f"[WEBHOOK] Duplicado detectado")
+                        return
+                    
+                    msg = formatter.format_whatsapp(alert)
+                    groups = router.get_whatsapp_groups(alert.get("cliente"))
+                    
+                    if not groups:
+                        log.warning(f"[WEBHOOK] No hay grupos para cliente: {alert.get('cliente')}")
+                        return
+                    
+                    queued = queue.push(groups, msg, alert, post.get("image_url", ""))
+                    if queued:
+                        flush_all_pending([queued], queue, wa_sender, dedup)
+                
+                try:
+                    process_webhook_queue(process_webhook_post)
+                except Exception as e:
+                    log.error(f"[WEBHOOKS] Error procesando: {e}")
 
         # Reintentar alertas que fallaron por bridge caído en ciclos anteriores
         retry_unsent(queue, wa_sender, dedup)
@@ -396,9 +476,13 @@ def run_forever():
         if not config.USE_RSS_FEED:
             session_status = " | Sesión FB: ⚠ EXPIRADA" if is_session_expired() else " | Sesión FB: OK"
         
+        webhooks_status = ""
+        if WEBHOOKS_AVAILABLE and config.WEBHOOKS_ENABLED:
+            webhooks_status = f" | Webhooks: {webhook_queue.qsize()} encolados"
+        
         log.info(
             f"\nCiclo {ciclo} completo — "
-            f"Alertas enviadas: {ciclo_alertas}{session_status}\n"
+            f"Alertas enviadas: {ciclo_alertas}{session_status}{webhooks_status}\n"
             f"Esperando {config.INTERVAL_MINUTES} minutos antes del siguiente ciclo...\n"
         )
         heartbeat()  # avisa al watchdog que el ciclo terminó OK

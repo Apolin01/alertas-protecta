@@ -728,3 +728,15 @@ class Config:
 
     def get_rubro(self, cliente: str) -> str:
         return self.CLIENTE_TO_RUBRO.get(cliente, "Agroindustria")
+
+    # ─────────────────────────────────────────────
+    # WEBHOOKS (WEBHOOK_SERVER)
+    # ─────────────────────────────────────────────
+    WEBHOOKS_ENABLED = os.getenv("WEBHOOKS_ENABLED", "true").lower() == "true"
+    WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0")
+    WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "5000"))
+    WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")  # Opcional: para validar webhooks
+    
+    # Si True, mantiene polling RSS como fallback
+    # Si False, solo procesa webhooks
+    WEBHOOKS_WITH_POLLING_FALLBACK = os.getenv("WEBHOOKS_WITH_POLLING_FALLBACK", "true").lower() == "true"
