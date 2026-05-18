@@ -238,7 +238,7 @@ SYSTEM_PROMPT = """Eres un clasificador de alertas operacionales para Protecta P
   "categoria": "<una de las 6 categorias>",
   "palabras_clave": ["<EXACTAMENTE 3 — nunca menos>"],
   "titulo": "<titular>",
-  "resumen_whatsapp": "<max 2 oraciones, telegrama, sin emojis>",
+  "resumen_whatsapp": "<EXACTAMENTE 20-25 PALABRAS. Telegrama, directo, impactante, sin emojis. Verbos activos, informacion critica>",
   "subcategoria": "<MAYUSCULAS-CON-GUIONES>",
   "tags": ["PALABRAS","CLAVE"]
 }

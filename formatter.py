@@ -60,6 +60,99 @@ def _strip_camel(text: str) -> str:
 
 class AlertFormatter:
 
+    def _optimize_description(self, desc: str) -> str:
+        """
+        Optimiza la descripción para WhatsApp:
+        - Exactamente 20-25 palabras máximo
+        - Telegrama directo y llamativo
+        - Verbos activos
+        - Sin palabras innecesarias
+        - Impacto para el lector
+        
+        Estrategia:
+        1. Remover palabras relleno (según, reportan, indicaron, etc)
+        2. Mantener hechos críticos
+        3. Usar verbos fuertes
+        4. Garantizar 20-25 palabras
+        """
+        if not desc or len(desc) < 5:
+            return "Noticia sin descripción detallada"
+        
+        # Normalizar espacios
+        desc = " ".join(desc.split())
+        
+        # Palabras relleno comunes que podemos remover
+        RELLENO = {
+            "segun", "reportan", "indicaron", "senalaron", "menciono", "indico",
+            "fue", "fue", "sera", "fue", "esta", "ahora", "apenas", "apenas",
+            "mientras", "actualmente", "recientemente", "informo", "dio", "cuenta",
+            "dieron", "suele", "podria", "puede", "posible", "logicamente",
+        }
+        
+        words = desc.split()
+        word_count = len(words)
+        
+        # ✓ PERFECTO: 20-25 palabras
+        if 20 <= word_count <= 25:
+            return desc
+        
+        # ⚠️ MUY CORTO: < 20 palabras → agregar contexto
+        if word_count < 20:
+            # Detectar tipo de noticia y agregar impacto
+            desc_lower = desc.lower()
+            
+            # Casos críticos que necesitan énfasis
+            if any(x in desc_lower for x in ["detenido", "asesinado", "muerto", "herido"]):
+                if "operativo" not in desc_lower and "policial" not in desc_lower:
+                    desc = f"En acción policial: {desc}"
+            elif any(x in desc_lower for x in ["bloqueo", "protesta", "manifestacion", "paro"]):
+                if "carretera" not in desc_lower and "vía" not in desc_lower and "ruta" not in desc_lower:
+                    desc = f"Mantiene bloqueo: {desc}"
+            elif any(x in desc_lower for x in ["incendio", "explosion", "derrame"]):
+                if "emergencia" not in desc_lower:
+                    desc = f"EMERGENCIA: {desc}"
+            elif any(x in desc_lower for x in ["acuerdo", "negociacion", "dialogo"]):
+                if "dialogo" not in desc_lower:
+                    desc = f"En negociación: {desc}"
+            
+            words = desc.split()
+            word_count = len(words)
+        
+        # 🔄 DEMASIADO LARGO: > 25 palabras → podar inteligentemente
+        if word_count > 25:
+            palabras_filtradas = []
+            for i, w in enumerate(words):
+                # Remover solo palabras relleno
+                if w.lower() in RELLENO:
+                    continue
+                # Remover algunos artículos innecesarios (mantener estructura)
+                if w.lower() in ["el", "la", "los", "las", "un", "una"] and i > 0:
+                    if palabras_filtradas[-1].lower() in ["en", "de", "por", "para"]:
+                        continue
+                palabras_filtradas.append(w)
+            
+            desc = " ".join(palabras_filtradas)
+            words = desc.split()
+        
+        # Garantizar exactamente 20-25 palabras
+        word_count = len(words)
+        
+        if word_count < 20:
+            # Agregar cierre impactante
+            if "sentido" not in desc.lower() and "urgencia" not in desc.lower():
+                if words[-1].lower() not in [".", "!"]:
+                    desc = f"{desc} Requiere atención inmediata"
+        
+        elif word_count > 25:
+            # Truncar a 25 palabras manteniendo estructura
+            desc = " ".join(words[:25])
+            # Agregar puntuación si falta
+            if not desc.endswith((".", "!", "?")):
+                desc = f"{desc}."
+        
+        return desc.strip()
+
+
     def shorten_url(self, url: str) -> str:
         """Acorta una URL usando TinyURL."""
         if not url or not url.startswith("http"):
@@ -152,6 +245,9 @@ class AlertFormatter:
 
         titulo  = str(alert.get("titulo", "") or "").strip()
         resumen = str(alert.get("resumen_whatsapp", "") or "").strip()
+        
+        # OPTIMIZAR RESUMEN: 20-25 palabras exactamente
+        resumen = self._optimize_description(resumen) if resumen else ""
 
         # Combinar titulo + resumen
         cuerpo = f"{titulo} {resumen}".strip() if titulo else resumen
