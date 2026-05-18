@@ -29,13 +29,16 @@ from difflib import SequenceMatcher
 log = logging.getLogger(__name__)
 
 # Umbrales de similitud
-JACCARD_THRESHOLD_TITULO = 0.60       # Más sensible para títulos (era 0.65)
-JACCARD_THRESHOLD_CONTENIDO = 0.65    # Original para contenido completo
-LEVENSHTEIN_THRESHOLD = 0.75          # Similitud de strings (0-1, donde 1 es idéntico)
+JACCARD_THRESHOLD_TITULO = 0.50       # MUCHO MÁS SENSIBLE - reducido para capturar variaciones
+JACCARD_THRESHOLD_CONTENIDO = 0.55    # Reducido para descripción
+LEVENSHTEIN_THRESHOLD = 0.65          # Más bajo para capturar parafraseos
+SIMILITUD_EVENTO_MIN = 0.65           # Para detección de mismo evento
 
 # Ventanas de búsqueda
 DEDUP_WINDOW_HOURS = 12               # Ventana de dedup
-DEDUP_SAME_BUNDLE_HOURS = 3           # Ventana más corta para el mismo bundle
+DEDUP_SAME_BUNDLE_HOURS = 0.5         # ⚡ REDUCIDO A 30 MINUTOS - mismo bundle = mismo evento rápido
+DEDUP_SAME_SOURCE_HOURS = 6           # Ventana para misma fuente
+DEDUP_SAME_LOCATION_HOURS = 0.25      # ⚡ NUEVO: 15 minutos - mismo depto + prov = probablemente dup
 
 # Stopwords español + palabras frecuentes en titulares
 _STOPWORDS_ES = {
@@ -87,6 +90,33 @@ def _levenshtein_ratio(s1: str, s2: str) -> float:
     return SequenceMatcher(None, s1, s2).ratio()
 
 
+def _extract_event_signature(text: str) -> str:
+    """
+    Extrae firma de evento: ubicaciones + números significativos.
+    Ej: "Canon minero 576.4 millones Cajamarca" → "canon_cajamarca_576"
+    Sirve para detectar mismo evento en diferentes fuentes.
+    """
+    if not text:
+        return ""
+    
+    # Normalizar
+    text = _strip_accents(text.lower())
+    
+    # Extraer números significativos (cantidades)
+    numbers = re.findall(r'\d+[.,]?\d*', text)
+    number_sig = numbers[0] if numbers else ""
+    
+    # Palabras clave (ubicaciones + tipos de evento)
+    important_words = re.findall(r'\b([a-z]{4,})\b', text)
+    important_words = [w for w in important_words if w not in _STOPWORDS_ES and len(w) >= 4][:3]
+    
+    sig = "_".join(important_words)
+    if number_sig:
+        sig += f"_{number_sig.replace('.', '').replace(',', '')}"
+    
+    return sig[:60] if sig else ""
+
+
 def _get_conn():
     url = os.environ["DATABASE_URL"]
     if url.startswith("postgres://"):
@@ -133,6 +163,7 @@ class Deduplicator:
                 subcategoria     TEXT,
                 cliente          TEXT,
                 resumen          TEXT,
+                url              TEXT,
                 sent_at          TEXT,
                 UNIQUE(titulo_hash, departamento)
             )
@@ -141,6 +172,7 @@ class Deduplicator:
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS titulo_hash TEXT")
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS descripcion_norm TEXT")
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS provincia TEXT")
+        cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS url TEXT")
         
         # Índices para búsquedas rápidas
         cur.execute("CREATE INDEX IF NOT EXISTS idx_dept_sent ON sent_alerts (departamento, sent_at)")
@@ -206,14 +238,52 @@ class Deduplicator:
         """
         Retorna True si ya se envió una alerta similar en las últimas N horas.
 
-        Cuatro niveles de verificación (en orden):
-          1. Hash exacto por (depto, prov, subcategoría, palabras_clave)
-          2. Hash de título normalizado (títulos con diferencia mínima)
-          3. Similitud Jaccard de títulos >= 60% en el mismo departamento
-          4. Similitud Jaccard de descripciones >= 70% en el mismo departamento
+        Cinco niveles de verificación (en orden):
+          1. URL exacta (si existe)
+          2. Firma de evento (números + ubicaciones clave)
+          3. Hash exacto de contenido (clasificación + palabras clave)
+          4. Similitud Jaccard de títulos >= 55% en el mismo departamento
+          5. Similitud Jaccard de descripciones >= 60% en el mismo departamento
         """
         
-        # 🔴 NIVEL 1: Hash exacto de contenido
+        # 🔴 NIVEL 0: URL EXACTA (si está disponible)
+        url = alert.get("url", "").strip()
+        if url:
+            cur = self._cursor()
+            cutoff = (datetime.now() - timedelta(hours=window_hours)).isoformat()
+            cur.execute(
+                "SELECT 1 FROM sent_alerts WHERE url = %s AND sent_at > %s LIMIT 1",
+                (url, cutoff)
+            )
+            if cur.fetchone():
+                log.info(f"[Dedup] ✓ NIVEL 0 (URL exacta) → DUPLICADO")
+                return True
+        
+        # 🟣 NIVEL 1: FIRMA DE EVENTO (números + ubicaciones)
+        titulo = alert.get("titulo", "").strip()
+        desc = alert.get("resumen_whatsapp", "").strip()
+        combined_text = f"{titulo} {desc}"
+        
+        if len(combined_text) > 20:
+            sig = _extract_event_signature(combined_text)
+            if sig:
+                dept = (alert.get("departamento") or "").upper().strip()
+                if dept:
+                    cur = self._cursor()
+                    # Ventana más corta para misma firma (1 hora)
+                    cutoff = (datetime.now() - timedelta(hours=1)).isoformat()
+                    cur.execute(
+                        "SELECT resumen FROM sent_alerts WHERE departamento = %s AND sent_at > %s AND resumen IS NOT NULL",
+                        (dept, cutoff)
+                    )
+                    for (rec_resumen,) in cur.fetchall():
+                        if rec_resumen:
+                            sig_existente = _extract_event_signature(f"{rec_resumen}")
+                            if sig == sig_existente and sig:
+                                log.info(f"[Dedup] ✓ NIVEL 1 (Firma evento '{sig}') → DUPLICADO")
+                                return True
+        
+        # 🔴 NIVEL 2: Hash exacto de contenido
         ch = self._content_hash(alert)
         cutoff = (datetime.now() - timedelta(hours=window_hours)).isoformat()
         cur = self._cursor()
@@ -223,14 +293,30 @@ class Deduplicator:
             (ch, cutoff)
         )
         if cur.fetchone():
-            log.info(f"[Dedup] ✓ Nivel 1 (Hash exacto) → DUPLICADO")
+            log.info(f"[Dedup] ✓ NIVEL 2 (Hash exacto) → DUPLICADO")
             return True
+        
+        # ⚡ NIVEL 2.5: ULTRA-AGRESIVO - MISMO DEPARTAMENTO + PROVINCIA EN 15 MIN
+        dept = (alert.get("departamento") or "").upper().strip()
+        prov = (alert.get("provincia") or "").upper().strip()
+        
+        if dept and prov:
+            cutoff_agressive = (datetime.now() - timedelta(hours=DEDUP_SAME_LOCATION_HOURS)).isoformat()
+            
+            # Búsqueda ultra-rápida: mismo lugar en 15 minutos
+            cur.execute(
+                """SELECT 1 FROM sent_alerts 
+                   WHERE departamento = %s AND provincia = %s 
+                   AND sent_at > %s LIMIT 1""",
+                (dept, prov, cutoff_agressive)
+            )
+            if cur.fetchone():
+                log.info(f"[Dedup] ✓ NIVEL 2.5 (Mismo Lugar {dept}/{prov} en 15min) → DUPLICADO")
+                return True
 
-        # 🟡 NIVEL 2: Hash de título (títulos casi idénticos)
-        titulo = alert.get("titulo", "").strip()
+        # 🟡 NIVEL 3: Hash de título (títulos casi idénticos)
         if titulo and len(titulo) > 10:
             th = self._titulo_hash(titulo)
-            dept = (alert.get("departamento") or "").upper().strip()
             
             if dept:
                 cur.execute(
@@ -238,17 +324,17 @@ class Deduplicator:
                     (th, dept, cutoff)
                 )
                 if cur.fetchone():
-                    log.info(f"[Dedup] ✓ Nivel 2 (Hash título) → DUPLICADO")
+                    log.info(f"[Dedup] ✓ NIVEL 3 (Hash título) → DUPLICADO")
                     return True
 
-        # 🟠 NIVEL 3: Similitud Jaccard de TÍTULOS (>=60%)
+        # 🟠 NIVEL 4: Similitud Jaccard de TÍTULOS (>=50%)
         if titulo and len(titulo) > 10:
             dept = (alert.get("departamento") or "").upper().strip()
             if not dept:
                 return False
             
             set_titulo_nuevo = _words_set(titulo)
-            if len(set_titulo_nuevo) < 3:
+            if len(set_titulo_nuevo) < 2:  # Reducido a 2 palabras (de 3)
                 return False
             
             cur.execute(
@@ -270,31 +356,29 @@ class Deduplicator:
                 
                 if score_jaccard >= JACCARD_THRESHOLD_TITULO:
                     log.info(
-                        f"[Dedup] ✓ Nivel 3 (Jaccard Título={score_jaccard:.2f}) → DUPLICADO"
+                        f"[Dedup] ✓ NIVEL 4 (Jaccard Título={score_jaccard:.2f}) → DUPLICADO"
                     )
                     return True
                 
                 if score_leven >= LEVENSHTEIN_THRESHOLD:
                     log.info(
-                        f"[Dedup] ✓ Nivel 3 (Levenshtein={score_leven:.2f}) → DUPLICADO"
+                        f"[Dedup] ✓ NIVEL 4 (Levenshtein={score_leven:.2f}) → DUPLICADO"
                     )
                     return True
 
-        # 🔴 NIVEL 4: Similitud Jaccard de DESCRIPCIONES (>=70%)
-        desc = alert.get("resumen_whatsapp", "").strip()
+        # 🔴 NIVEL 5: Similitud Jaccard de DESCRIPCIONES (>=55%)
         if desc and len(desc) > 15:
-            dept = (alert.get("departamento") or "").upper().strip()
             if not dept:
                 return False
             
             set_desc_nuevo = _words_set(desc)
-            if len(set_desc_nuevo) < 5:
+            if len(set_desc_nuevo) < 3:  # Reducido a 3 palabras
                 return False
             
             cur.execute(
                 "SELECT descripcion_norm FROM sent_alerts "
                 "WHERE departamento = %s AND sent_at > %s AND descripcion_norm IS NOT NULL",
-                (dept, (datetime.now() - timedelta(hours=6)).isoformat())  # Ventana más corta
+                (dept, (datetime.now() - timedelta(hours=6)).isoformat())
             )
             
             for (desc_norm,) in cur.fetchall():
@@ -305,7 +389,7 @@ class Deduplicator:
                 
                 if score >= JACCARD_THRESHOLD_CONTENIDO:
                     log.info(
-                        f"[Dedup] ✓ Nivel 4 (Jaccard DESC={score:.2f}) → DUPLICADO"
+                        f"[Dedup] ✓ NIVEL 5 (Jaccard DESC={score:.2f}) → DUPLICADO"
                     )
                     return True
         
@@ -316,6 +400,7 @@ class Deduplicator:
         ch = self._content_hash(alert)
         titulo = alert.get("titulo", "").strip()
         desc = alert.get("resumen_whatsapp", "").strip()
+        url = alert.get("url", "").strip()
         
         # Normalizar para búsquedas futuras
         titulo_words = " ".join(sorted(_words_set(titulo)))[:500] if titulo else ""
@@ -327,8 +412,8 @@ class Deduplicator:
             cur.execute(
                 """INSERT INTO sent_alerts
                    (content_hash, titulo_hash, titulo_norm, descripcion_norm, 
-                    departamento, provincia, subcategoria, cliente, resumen, sent_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    departamento, provincia, subcategoria, cliente, resumen, url, sent_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (titulo_hash, departamento) DO NOTHING""",
                 (
                     ch,
@@ -340,6 +425,7 @@ class Deduplicator:
                     alert.get("subcategoria", ""),
                     alert.get("cliente", ""),
                     desc[:250],
+                    url,
                     datetime.now().isoformat()
                 )
             )
@@ -357,10 +443,13 @@ class Deduplicator:
         cutoff_alerts = (datetime.now() - timedelta(hours=24)).isoformat()
         cur = self._cursor()
         
-        deleted_processed = cur.execute("DELETE FROM processed WHERE seen_at < %s", (cutoff,))
-        deleted_alerts = cur.execute("DELETE FROM sent_alerts WHERE sent_at < %s", (cutoff_alerts,))
+        cur.execute("DELETE FROM processed WHERE seen_at < %s", (cutoff,))
+        count_processed = cur.rowcount
+        
+        cur.execute("DELETE FROM sent_alerts WHERE sent_at < %s", (cutoff_alerts,))
+        count_alerts = cur.rowcount
         
         self.conn.commit()
         
-        if deleted_processed.rowcount > 0 or deleted_alerts.rowcount > 0:
-            log.info(f"[Dedup] Limpieza: {deleted_processed.rowcount} URLs, {deleted_alerts.rowcount} alertas antiguas")
+        if count_processed > 0 or count_alerts > 0:
+            log.info(f"[Dedup] Limpieza: {count_processed} URLs, {count_alerts} alertas antiguas")
