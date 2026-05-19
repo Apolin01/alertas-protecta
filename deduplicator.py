@@ -28,17 +28,17 @@ from difflib import SequenceMatcher
 
 log = logging.getLogger(__name__)
 
-# Umbrales de similitud
-JACCARD_THRESHOLD_TITULO = 0.50       # MUCHO MÁS SENSIBLE - reducido para capturar variaciones
-JACCARD_THRESHOLD_CONTENIDO = 0.55    # Reducido para descripción
-LEVENSHTEIN_THRESHOLD = 0.65          # Más bajo para capturar parafraseos
-SIMILITUD_EVENTO_MIN = 0.65           # Para detección de mismo evento
+# Umbrales de similitud — ¡MUCHO MÁS AGRESIVOS para capturar variaciones!
+JACCARD_THRESHOLD_TITULO = 0.35       # ⭐ REDUCIDO: 0.50 → 0.35 (captura "Disparo" vs "Homicidio" + mismo lugar)
+JACCARD_THRESHOLD_CONTENIDO = 0.40    # ⭐ REDUCIDO: 0.55 → 0.40 (más sensible a parafraseos)
+LEVENSHTEIN_THRESHOLD = 0.60          # ⭐ REDUCIDO: 0.65 → 0.60 (Nuevo Chimbote ≈ Chimbote)
+SIMILITUD_EVENTO_MIN = 0.55           # Para detección semántica de mismo evento
 
 # Ventanas de búsqueda
-DEDUP_WINDOW_HOURS = 12               # Ventana de dedup
-DEDUP_SAME_BUNDLE_HOURS = 0.5         # ⚡ REDUCIDO A 30 MINUTOS - mismo bundle = mismo evento rápido
+DEDUP_WINDOW_HOURS = 24               # ⭐ AMPLIADO: 12 → 24h (no repita en todo el día)
+DEDUP_SAME_BUNDLE_HOURS = 0.5         # 30 MINUTOS - mismo bundle = mismo evento
 DEDUP_SAME_SOURCE_HOURS = 6           # Ventana para misma fuente
-DEDUP_SAME_LOCATION_HOURS = 0.25      # ⚡ NUEVO: 15 minutos - mismo depto + prov = probablemente dup
+DEDUP_SAME_LOCATION_HOURS = 0.25      # 15 minutos - mismo depto + prov = probablemente dup
 
 # Stopwords español + palabras frecuentes en titulares
 _STOPWORDS_ES = {
@@ -49,6 +49,31 @@ _STOPWORDS_ES = {
     "todas","esto","eso","hace","hizo","tuvo","dijo","ante","ese","esa","esos","esas",
     "sera","ser","fue","fui","tras","cada","otro","otra","otros","otras","desde",
     "hasta","aun","aun","tan","ahi","alli","aqui","yo","tu","el","ella","nos",
+}
+
+# Palabras clave que indican un EVENTO (para fingerprinting mejorado)
+_EVENT_KEYWORDS = {
+    "muerta", "muerto", "muerte", "homicidio", "asesinato", "crimen",
+    "accidente", "choque", "colisión", "disparo", "tiroteo", "balazo",
+    "incendio", "fuego", "explosión", "derrumbe", "desmoronamiento",
+    "inundación", "flood", "deslizamiento", "caída", "derrumbe",
+    "robo", "asalto", "hurto", "robobanc", "robocasa", "secuestro",
+    "violencia", "agresión", "ataque", "combate", "enfrentamiento",
+    "arrestado", "detenido", "capturado", "aprehendido", "encarcelado",
+    "herido", "lesionado", "grave", "coma", "hospital", "urgencia",
+    "desaparecido", "extraviado", "hallado", "búsqueda", "rescate",
+    "canon", "minería", "explotacion", "protestas", "bloqueo", "huelga",
+    "corte", "vía", "carretera", "emergencia", "estado de emergencia",
+}
+
+# Mapeo de ubicaciones normalizadas (variaciones → forma canónica)
+_LOCATION_NORMALIZE = {
+    "nuevochimbote": "chimbote",
+    "nuevo chimbote": "chimbote",
+    "villa maria": "villa maría",
+    "chanchamayo": "chanchamayo",
+    "pucallpa": "pucallpa",
+    "huancayo": "huancayo",
 }
 
 
@@ -90,31 +115,120 @@ def _levenshtein_ratio(s1: str, s2: str) -> float:
     return SequenceMatcher(None, s1, s2).ratio()
 
 
+def _ai_are_same_event(titulo1: str, titulo2: str, desc1: str, desc2: str) -> bool:
+    """
+    NIVEL 6 FALLBACK: Usa IA para detectar si dos alertas hablan del MISMO EVENTO.
+    
+    Casos de uso:
+    - "Disparo en Chimbote" vs "Homicidio en Chimbote" (mismo evento, diferente nivel)
+    - "Empresario muere" vs "Hombre fallece" (parafraseo semántico)
+    - "Canon minero aumenta" vs "Minería crecimiento" (mismo tema, diferentes palabras)
+    
+    IMPORTANTE: Solo se llama cuando otros niveles fallan pero hay similitud media.
+    Es una RED FINAL para no dejar escapar duplicados.
+    """
+    try:
+        import requests
+        from config import Config
+        
+        config = Config()
+        ai_provider = getattr(config, "AI_PROVIDER", "openai").lower()
+        
+        prompt = f"""Analiza estos dos titulares de noticias. ¿Reportan el MISMO EVENTO?
+Responde con una palabra: "SI" o "NO"
+
+TITULO 1: {titulo1[:100]}
+{desc1[:80]}
+
+TITULO 2: {titulo2[:100]}
+{desc2[:80]}
+
+Respuesta:"""
+        
+        # Usar OpenAI como fallback predeterminado
+        if ai_provider == "openai":
+            key = config.OPENAI_API_KEY
+            if not key:
+                return False
+            
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 10,
+                    "temperature": 0
+                },
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                content = response.json()["choices"][0]["message"]["content"].upper()
+                if "SI" in content:
+                    log.info(f"[Dedup] ⚡ NIVEL 6 (IA Semántica) → DUPLICADO DETECTADO")
+                    return True
+            return False
+        
+        # Otros providers podrían añadirse aquí si es necesario
+        return False
+    
+    except Exception as e:
+        log.debug(f"[Dedup] IA fallback no disponible: {e}")
+        return False
+
+
 def _extract_event_signature(text: str) -> str:
     """
-    Extrae firma de evento: ubicaciones + números significativos.
-    Ej: "Canon minero 576.4 millones Cajamarca" → "canon_cajamarca_576"
-    Sirve para detectar mismo evento en diferentes fuentes.
+    Extrae firma de evento MEJORADA: ubicación normalizada + números + palabras clave de evento.
+    Ej: "Canon minero 576.4M Cajamarca" → "cajamarca_mineria_576"
+         "Disparo Nuevo Chimbote" → "chimbote_arma"
+         "Homicidio Chimbote" → "chimbote_muerte"
+    
+    Esto ayuda a detectar el MISMO EVENTO reportado de forma diferente.
     """
     if not text:
         return ""
     
     # Normalizar
-    text = _strip_accents(text.lower())
+    text_norm = _strip_accents(text.lower())
     
-    # Extraer números significativos (cantidades)
+    # Extraer ubicación (palabras de 4+ chars al inicio, o palabras conocidas de ciudades)
+    location_words = []
+    for word in text_norm.split():
+        word_clean = re.sub(r'[^a-z]', '', word)
+        if len(word_clean) >= 4 and word_clean not in _STOPWORDS_ES:
+            # Aplicar mapeo de normalización
+            normalized = _LOCATION_NORMALIZE.get(word_clean, word_clean)
+            if normalized not in location_words:
+                location_words.append(normalized)
+            if len(location_words) >= 2:  # Max 2 ubicaciones
+                break
+    
+    location_sig = "_".join(location_words[:2]) if location_words else ""
+    
+    # Extraer palabras clave de EVENTO (muertes, accidentes, etc)
+    event_keyword = ""
+    for keyword in _EVENT_KEYWORDS:
+        if keyword in text_norm:
+            event_keyword = keyword
+            break
+    
+    # Extraer números significativos (cantidades, dinero)
     numbers = re.findall(r'\d+[.,]?\d*', text)
     number_sig = numbers[0] if numbers else ""
     
-    # Palabras clave (ubicaciones + tipos de evento)
-    important_words = re.findall(r'\b([a-z]{4,})\b', text)
-    important_words = [w for w in important_words if w not in _STOPWORDS_ES and len(w) >= 4][:3]
-    
-    sig = "_".join(important_words)
+    # Construir firma
+    sig_parts = []
+    if location_sig:
+        sig_parts.append(location_sig)
+    if event_keyword:
+        sig_parts.append(event_keyword[:8])  # Max 8 chars
     if number_sig:
-        sig += f"_{number_sig.replace('.', '').replace(',', '')}"
+        sig_parts.append(number_sig.replace('.', '').replace(',', '')[:6])  # Max 6 chars
     
-    return sig[:60] if sig else ""
+    sig = "_".join(sig_parts)
+    return sig[:120] if sig else ""
 
 
 def _get_conn():
@@ -392,6 +506,43 @@ class Deduplicator:
                         f"[Dedup] ✓ NIVEL 5 (Jaccard DESC={score:.2f}) → DUPLICADO"
                     )
                     return True
+        
+        # ⚡ NIVEL 6: IA FALLBACK — Comparación semántica (último recurso)
+        # Se ejecuta SOLO cuando:
+        # - Los 5 niveles anteriores fallaron
+        # - Hay similitud media (0.35+) pero no es definitoria
+        # - Mismo departamento + últimas 6 horas
+        if titulo and desc and (alert.get("departamento") or "").strip():
+            dept = (alert.get("departamento") or "").upper().strip()
+            cutoff_ia = (datetime.now() - timedelta(hours=6)).isoformat()
+            
+            # Buscar candidatos con similitud media que podrían ser duplicados
+            cur.execute(
+                "SELECT titulo_norm, descripcion_norm FROM sent_alerts "
+                "WHERE departamento = %s AND sent_at > %s AND titulo_norm IS NOT NULL",
+                (dept, cutoff_ia)
+            )
+            
+            for (titulo_existente, desc_existente) in cur.fetchall():
+                if not titulo_existente:
+                    continue
+                
+                # Solo aplicar IA si hay similitud media (0.3+)
+                set_t_new = _words_set(titulo)
+                set_t_exist = set(titulo_existente.split())
+                score_medio = _jaccard(set_t_new, set_t_exist)
+                
+                if 0.30 <= score_medio < JACCARD_THRESHOLD_TITULO:
+                    # Usar IA para confirmar si es el mismo evento
+                    log.debug(f"[Dedup] Comparando semánticamente (Jaccard={score_medio:.2f}): podría ser duplicado")
+                    
+                    if _ai_are_same_event(
+                        titulo, 
+                        titulo_existente,
+                        desc[:150],
+                        desc_existente[:150] if desc_existente else ""
+                    ):
+                        return True
         
         return False
 
