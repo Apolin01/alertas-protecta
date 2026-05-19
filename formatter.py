@@ -58,102 +58,76 @@ def _strip_camel(text: str) -> str:
     return s.upper()
 
 
+def _normalize_ubication(dept: str, prov: str, dist: str, config=None) -> tuple:
+    """
+    Normaliza departamento, provincia y distrito según las reglas:
+    1. Si no hay provincia → provincia = departamento
+    2. Si no hay distrito → distrito = provincia
+    3. Valida contra el mapeo en config.DEPT_PROV_DIST
+    4. Retorna tupla (dept, prov, dist) normalizada y validada
+    """
+    dept = (dept or "").upper().strip()
+    prov = (prov or "").upper().strip()
+    dist = (dist or "").upper().strip()
+    
+    # Caso nacional
+    if dept == "NACIONAL":
+        return "NACIONAL", "NACIONAL", ""
+    
+    # Si todo está vacío
+    if not dept and not prov and not dist:
+        return "DESCONOCIDO", "DESCONOCIDO", "DESCONOCIDO"
+    
+    # Si existe config, validar contra DEPT_PROV_DIST
+    if config and hasattr(config, 'DEPT_PROV_DIST'):
+        dept_map = config.DEPT_PROV_DIST
+        
+        # Validar departamento
+        if dept and dept in dept_map:
+            prov_dist_map = dept_map[dept]
+            
+            # Si hay provincia, validar que existe
+            if prov and prov in prov_dist_map:
+                # Provincia válida, usar como es
+                if not dist:
+                    dist = prov  # Fallback: distrito = provincia
+                elif dist not in prov_dist_map.get(prov, []):
+                    # Distrito no válido para esta provincia, usar provincia
+                    dist = prov
+            elif prov:
+                # Provincia no válida para este departamento
+                # Buscar en otra provincia o usar como fallback
+                prov = list(prov_dist_map.keys())[0] if prov_dist_map else dept
+                dist = prov
+            else:
+                # No hay provincia, usar primera provincia del departamento
+                prov = list(prov_dist_map.keys())[0] if prov_dist_map else dept
+                dist = prov
+        else:
+            # Departamento no reconocido, usar como es
+            if not prov:
+                prov = dept
+            if not dist:
+                dist = prov
+    else:
+        # Sin config, aplicar reglas básicas
+        if not prov or prov == dept:
+            prov = dept
+        if not dist or dist == prov:
+            dist = prov
+    
+    # Último fallback: no dejar campos vacíos
+    if not dept:
+        dept = "DESCONOCIDO"
+    if not prov:
+        prov = dept
+    if not dist:
+        dist = prov
+    
+    return dept, prov, dist
+
+
 class AlertFormatter:
-
-    def _optimize_description(self, desc: str) -> str:
-        """
-        💯 GARANTIZA EXACTAMENTE 20-25 PALABRAS en la salida.
-        - Agresivo: remueve palabras relleno, artículos innecesarios
-        - Trunca si es necesario (máximo 25 palabras)
-        - Expande si es muy corto (mínimo 20 palabras)
-        """
-        if not desc or len(desc.strip()) < 3:
-            return "Noticia sin descripción detallada disponible"
-        
-        # Normalizar: múltiples espacios a uno
-        desc = " ".join(desc.split())
-        
-        # Palabras que SIEMPRE se pueden remover de forma segura
-        FILLER_AGGRESSIVE = {
-            "segun", "reporta", "reportan", "indico", "indicaron", "dijo", "dijeron",
-            "menciono", "mencionaron", "senalo", "senalaron", "fue", "sera", "es",
-            "ha", "han", "haya", "ahora", "ayer", "hoy", "mañana", "actualmente",
-            "recientemente", "informo", "dio", "cuenta", "dieron", "informaron",
-            "suele", "podria", "podrian", "puede", "pueden", "posible", "logicamente",
-            "mas", "pero", "muy", "bastante", "bastanta", "realmente", "verdaderamente",
-            "en", "a", "de", "del", "al", "con", "por", "para", "desde", "hacia",
-            "durante", "mientras", "cuando", "donde", "segun",
-        }
-        
-        words = desc.split()
-        word_count = len(words)
-        
-        # ✅ CASO 1: PERFECTO (20-25 palabras) → retornar como está
-        if 20 <= word_count <= 25:
-            return desc.strip()
-        
-        # ❌ CASO 2: DEMASIADO LARGO (> 25 palabras) → TRUNCAR AGRESIVAMENTE
-        if word_count > 25:
-            # PASO 1: Remover palabras relleno
-            filtradas = [w for w in words if w.lower() not in FILLER_AGGRESSIVE]
-            
-            # PASO 2: Si sigue siendo muy largo, truncar a 25
-            if len(filtradas) > 25:
-                filtradas = filtradas[:25]
-            
-            desc = " ".join(filtradas)
-            if not desc.endswith((".", "!", "?")):
-                desc = desc + "."
-            
-            return desc.strip()
-        
-        # ⚠️ CASO 3: MUY CORTO (< 20 palabras) → EXPANDIR CON CONTEXTO
-        if word_count < 20:
-            desc_lower = desc.lower()
-            
-            # Agregar contexto relevante según el tipo de noticia
-            prefijos = []
-            
-            if any(x in desc_lower for x in ["detenido", "asesinado", "muerto", "herido", "fallecido"]):
-                prefijos = ["Operativo policial registra", "Acción de seguridad en"]
-            elif any(x in desc_lower for x in ["bloqueo", "protesta", "manifestacion", "paro", "movilizacion"]):
-                prefijos = ["Mantiene bloqueo de acceso", "Protesta reportada en"]
-            elif any(x in desc_lower for x in ["incendio", "explosion", "derrame", "accidente"]):
-                prefijos = ["EMERGENCIA reportada en", "Incidente crítico en"]
-            elif any(x in desc_lower for x in ["acuerdo", "negociacion", "dialogo", "reunion"]):
-                prefijos = ["En negociación encontrándose", "Diálogo inicial entre"]
-            elif any(x in desc_lower for x in ["suspension", "huelga", "paro"]):
-                prefijos = ["Suspensión de servicios en", "Paro decretado en"]
-            
-            if prefijos:
-                desc = prefijos[0] + " " + desc
-                words = desc.split()
-            
-            word_count = len(words)
-            
-            # Si aún es < 20, truncar a 20 (garantizar mínimo)
-            if word_count < 20:
-                desc = " ".join(words[:20])
-        
-        # 🎯 GARANTÍA FINAL: SIEMPRE 20-25 palabras
-        words_final = desc.split()
-        
-        if len(words_final) < 20:
-            # Rellenar hasta 20
-            filler = "Situación requiere seguimiento continuo monitoreo"
-            desc = desc + " " + filler
-            words_final = desc.split()[:20]
-        
-        if len(words_final) > 25:
-            # Truncar a exactamente 25
-            words_final = words_final[:25]
-        
-        result = " ".join(words_final).strip()
-        if not result.endswith((".", "!", "?")):
-            result = result + "."
-        
-        return result
-
 
     def shorten_url(self, url: str) -> str:
         """Acorta una URL usando TinyURL."""
@@ -178,13 +152,12 @@ class AlertFormatter:
     def format_tabla(self, alert: dict, post: dict, config=None) -> str:
         fecha = alert.get("fecha_str") or _now_peru("%d-%m-%y")
 
-        dept = (alert.get("departamento") or "").upper().strip()
-        prov = (alert.get("provincia") or dept).upper().strip()
-        dist = (alert.get("distrito") or prov).upper().strip()
-
-        # Fallback si todo esta vacio
-        if not dept:
-            dept = prov = dist = "DESCONOCIDO"
+        dept = alert.get("departamento") or ""
+        prov = alert.get("provincia") or ""
+        dist = alert.get("distrito") or ""
+        
+        # Normalizar ubicación
+        dept, prov, dist = _normalize_ubication(dept, prov, dist, config)
 
         categoria = alert.get("categoria", "")
 
@@ -201,44 +174,32 @@ class AlertFormatter:
 
     # ─────────────────────────────────────────────────────────────
     # FORMATO 2 — WHATSAPP
-    # *FECHA PROVINCIA DISTRITO - KEYWORD1 - KEYWORD2 - KEYWORD3*
+    # *NIVEL FECHA DEPARTAMENTO PROVINCIA DISTRITO - KEYWORD1 - KEYWORD2 - KEYWORD3*
     # Titulo y resumen - FUENTE: url
     #
-    # Reglas:
-    #   - Si provincia tiene nombre propio (≠ departamento) → mostrar provincia, NO dept
-    #     ej: ICA + PISCO + TUPAC AMARU → "PISCO TUPAC AMARU"
-    #         CAJAMARCA + JAEN + ... → "JAEN ..."
-    #         LIMA + BARRANCA + SUPE → "BARRANCA SUPE"
-    #   - Si provincia es igual al dept (o vacia) → usar dept como cabecera
-    #   - Si distrito == provincia → "CIUDAD DE PROVINCIA"
-    #   - Si es NACIONAL → solo "NACIONAL"
-    #   - Keywords sin CamelCase: separados por " - "
+    # ESTRUCTURA OBLIGATORIA: SIEMPRE mostrar los 3 niveles (DEPT PROV DIST)
+    # Nunca omitir ninguno. Ejemplos:
+    #   ANCASH HUARAZ AYASH
+    #   ICA PISCO TUPAC AMARU
+    #   CAJAMARCA JAEN JAEN (si distrito = provincia)
+    #   NACIONAL NACIONAL (caso especial)
     # ─────────────────────────────────────────────────────────────
     def format_whatsapp(self, alert: dict, post: dict, config=None) -> str:
         fecha = alert.get("fecha_str") or _now_peru("%d-%m-%y")
 
-        dept = (alert.get("departamento") or "").upper().strip()
-        prov = (alert.get("provincia")    or "").upper().strip()
-        dist = (alert.get("distrito")     or "").upper().strip()
+        dept = alert.get("departamento") or ""
+        prov = alert.get("provincia") or ""
+        dist = alert.get("distrito") or ""
+        
+        # Normalizar ubicación
+        dept, prov, dist = _normalize_ubication(dept, prov, dist, config)
 
+        # Construir ubicación con los 3 niveles SIEMPRE
         if dept == "NACIONAL":
-            ubicacion = "NACIONAL"
-        elif prov and prov != dept:
-            # Provincia con nombre propio → omitir departamento
-            if dist and dist != prov:
-                ubicacion = f"{prov} {dist}"
-            elif dist == prov:
-                ubicacion = f"{prov}"
-            else:
-                ubicacion = prov
+            ubicacion = "NACIONAL NACIONAL"
         else:
-            # Provincia vacia o igual al departamento → usar departamento
-            if dist and dist != dept:
-                ubicacion = f"{dept} {dist}"
-            elif dist and dist == dept:
-                ubicacion = f"{dept}"
-            else:
-                ubicacion = dept
+            # SIEMPRE: DEPARTAMENTO PROVINCIA DISTRITO (sin omitir ninguno)
+            ubicacion = f"{dept} {prov} {dist}".strip()
 
         # Keywords: convertir CamelCase a palabras separadas, unir con " - "
         palabras = alert.get("palabras_clave", [])
@@ -247,9 +208,6 @@ class AlertFormatter:
 
         titulo  = str(alert.get("titulo", "") or "").strip()
         resumen = str(alert.get("resumen_whatsapp", "") or "").strip()
-        
-        # OPTIMIZAR RESUMEN: 20-25 palabras exactamente
-        resumen = self._optimize_description(resumen) if resumen else ""
 
         # Combinar titulo + resumen
         cuerpo = f"{titulo} {resumen}".strip() if titulo else resumen
@@ -264,13 +222,28 @@ class AlertFormatter:
         return f"{header}\n{cuerpo} {fuente_str}"
 
     # ─────────────────────────────────────────────────────────────
-    # Formato campo "Insertar noticia" del Google Form (sin cambios)
+    # Formato campo "Insertar noticia" del Google Form
     # ─────────────────────────────────────────────────────────────
-    def format_noticia_tabla(self, alert: dict, post: dict) -> str:
+    def format_noticia_tabla(self, alert: dict, post: dict, config=None) -> str:
         fecha        = alert.get("fecha_str") or _now_peru("%d-%m-%y")
         region       = alert.get("region", "").upper().replace(" ", "_")
         provincia    = alert.get("provincia", "").upper().replace(" ", "_")
         distrito     = alert.get("distrito", "").upper().replace(" ", "_")
+        
+        # Normalizar ubicación
+        dept, prov, dist = _normalize_ubication(
+            alert.get("departamento", ""),
+            alert.get("provincia", ""),
+            alert.get("distrito", ""),
+            config
+        )
+        
+        # Usar valores normalizados
+        if not provincia or provincia == "":
+            provincia = prov.replace(" ", "_")
+        if not distrito or distrito == "":
+            distrito = dist.replace(" ", "_")
+        
         categoria    = alert.get("categoria", "").replace(" ", "-").upper()
         subcategoria = alert.get("subcategoria", "").replace(" ", "-").upper()
         resumen      = alert.get("resumen_whatsapp", "")
@@ -279,6 +252,7 @@ class AlertFormatter:
     def format_sheets_row(self, alert: dict, post: dict, config=None) -> list:
         """
         Retorna lista de celdas en el mismo orden que las columnas del Form + extras.
+        Normaliza departamento, provincia y distrito automáticamente.
         """
         now_str     = _now_peru("%d/%m/%Y %H:%M:%S")
         email       = getattr(config, "EMAIL_SISTEMA", "protecta.dev@gmail.com") if config else "protecta.dev@gmail.com"
@@ -288,14 +262,20 @@ class AlertFormatter:
         rubro       = alert.get("rubro", "Otros")
         relevancia  = alert.get("relevancia", "Bajo")
         link        = post.get("url") or alert.get("source_url", "")
-        noticia_fmt = self.format_noticia_tabla(alert, post)
+        noticia_fmt = self.format_noticia_tabla(alert, post, config)
         tipo        = alert.get("tipo", "Noticia")
 
         nivel        = alert.get("nivel", "INFO")
         region       = alert.get("region", "")
-        departamento = alert.get("departamento", "")
-        provincia    = alert.get("provincia", "")
-        distrito     = alert.get("distrito", "")
+        
+        # Normalizar ubicación
+        departamento, provincia, distrito = _normalize_ubication(
+            alert.get("departamento", ""),
+            alert.get("provincia", ""),
+            alert.get("distrito", ""),
+            config
+        )
+        
         categoria    = alert.get("categoria", "")
         subcategoria = alert.get("subcategoria", "")
         tags         = "-".join(alert.get("tags", []))
