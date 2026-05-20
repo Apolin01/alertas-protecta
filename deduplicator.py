@@ -25,6 +25,7 @@ import unicodedata
 import psycopg2
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +114,33 @@ def _levenshtein_ratio(s1: str, s2: str) -> float:
     Retorna 0.0 a 1.0 donde 1.0 es idéntico.
     """
     return SequenceMatcher(None, s1, s2).ratio()
+
+def _normalize_url(url: str) -> str:
+    """
+    Normaliza URLs para evitar duplicados con parámetros distintos.
+    Elimina utm, fbclid, mibextid, ref, locale y slash final.
+    """
+    if not url:
+        return ""
+
+    parsed = urlparse(url.strip())
+
+    clean_query = []
+    for k, v in parse_qsl(parsed.query):
+        key = k.lower()
+        if not key.startswith("utm_") and key not in {
+            "fbclid", "mibextid", "ref", "locale"
+        }:
+            clean_query.append((k, v))
+
+    return urlunparse((
+        parsed.scheme.lower(),
+        parsed.netloc.lower(),
+        parsed.path.rstrip("/"),
+        "",
+        urlencode(clean_query),
+        ""
+    ))
 
 
 def _ai_are_same_event(titulo1: str, titulo2: str, desc1: str, desc2: str) -> bool:
@@ -232,11 +260,18 @@ def _extract_event_signature(text: str) -> str:
 
 
 def _get_conn():
-    url = os.environ["DATABASE_URL"]
+    url = os.environ.get("DATABASE_URL")
+
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL no está configurado. "
+            "Agrega la cadena de conexión PostgreSQL en el archivo .env"
+        )
+
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
-    return psycopg2.connect(url)
 
+    return psycopg2.connect(url)
 
 class Deduplicator:
     def __init__(self):
@@ -297,8 +332,8 @@ class Deduplicator:
         self._cleanup_old()
 
     def _url_hash(self, post: dict) -> str:
-        """Hash de la URL original."""
-        key = post.get("url") or post.get("text", "")
+        """Hash de la URL normalizada para evitar duplicados entre ciclos."""
+        key = _normalize_url(post.get("url") or "") or _normalize_text(post.get("text", ""))[:300]
         return hashlib.md5(key.encode("utf-8")).hexdigest()
 
     def _content_hash(self, alert: dict) -> str:
@@ -352,15 +387,18 @@ class Deduplicator:
         """
         Retorna True si ya se envió una alerta similar en las últimas N horas.
 
-        Cinco niveles de verificación (en orden):
-          1. URL exacta (si existe)
-          2. Firma de evento (números + ubicaciones clave)
-          3. Hash exacto de contenido (clasificación + palabras clave)
-          4. Similitud Jaccard de títulos >= 55% en el mismo departamento
-          5. Similitud Jaccard de descripciones >= 60% en el mismo departamento
+        SIETE niveles de verificación (en orden de rapidez):
+          0. URL exacta (si existe) — SUPER RÁPIDO
+          0.5. Content hash exacto — MÁS RÁPIDO
+          1. Firma de evento (números + ubicaciones clave)
+          2. Hash exacto de contenido (clasificación + palabras clave)
+          2.5. ULTRA-AGRESIVO: Mismo dept/prov en 15 min
+          3/4. Similitud Jaccard de títulos
+          5. Similitud Jaccard de descripciones
+          6. IA Fallback para casos ambiguos
         """
         
-        # 🔴 NIVEL 0: URL EXACTA (si está disponible)
+        # 🔴 NIVEL 0: URL EXACTA (si está disponible) — INSTANTÁNEO
         url = alert.get("url", "").strip()
         if url:
             cur = self._cursor()
@@ -372,6 +410,19 @@ class Deduplicator:
             if cur.fetchone():
                 log.info(f"[Dedup] ✓ NIVEL 0 (URL exacta) → DUPLICADO")
                 return True
+        
+        # 🔵 NIVEL 0.5: CONTENT HASH EXACTO — SUPER RÁPIDO
+        ch = self._content_hash(alert)
+        cutoff = (datetime.now() - timedelta(hours=window_hours)).isoformat()
+        cur = self._cursor()
+        
+        cur.execute(
+            "SELECT 1 FROM sent_alerts WHERE content_hash = %s AND sent_at > %s LIMIT 1",
+            (ch, cutoff)
+        )
+        if cur.fetchone():
+            log.info(f"[Dedup] ✓ NIVEL 0.5 (Content Hash exacto) → DUPLICADO")
+            return True
         
         # 🟣 NIVEL 1: FIRMA DE EVENTO (números + ubicaciones)
         titulo = alert.get("titulo", "").strip()
@@ -397,18 +448,8 @@ class Deduplicator:
                                 log.info(f"[Dedup] ✓ NIVEL 1 (Firma evento '{sig}') → DUPLICADO")
                                 return True
         
-        # 🔴 NIVEL 2: Hash exacto de contenido
-        ch = self._content_hash(alert)
-        cutoff = (datetime.now() - timedelta(hours=window_hours)).isoformat()
-        cur = self._cursor()
-        
-        cur.execute(
-            "SELECT 1 FROM sent_alerts WHERE content_hash = %s AND sent_at > %s",
-            (ch, cutoff)
-        )
-        if cur.fetchone():
-            log.info(f"[Dedup] ✓ NIVEL 2 (Hash exacto) → DUPLICADO")
-            return True
+        # 🔴 NIVEL 2: (Eliminado - ya cubierto por NIVEL 0.5)
+        # El content_hash exacto ya se verifica en NIVEL 0.5 al inicio
         
         # ⚡ NIVEL 2.5: ULTRA-AGRESIVO - MISMO DEPARTAMENTO + PROVINCIA EN 15 MIN
         dept = (alert.get("departamento") or "").upper().strip()
@@ -547,7 +588,23 @@ class Deduplicator:
         return False
 
     def mark_alert_sent(self, alert: dict):
-        """Registra una alerta como enviada para futuras dedups."""
+        """
+        Registra una alerta como enviada para futuras dedups.
+        
+        ⚠️ IMPORTANTE: 
+        - SOLO guarda si NO es duplicado (doble-check)
+        - Usa transacción atómica para evitar race conditions
+        - No guarda alertas con nivel IGNORAR
+        """
+        # No guardar alertas ignoradas
+        if alert.get("nivel") == "IGNORAR":
+            return
+        
+        # Double-check: verificar UNA VEZ MÁS que no sea duplicado ANTES de guardar
+        if self.is_duplicate_alert(alert):
+            log.info(f"[Dedup] Rechazado: duplicado detectado en mark_alert_sent, NO se guarda")
+            return
+        
         ch = self._content_hash(alert)
         titulo = alert.get("titulo", "").strip()
         desc = alert.get("resumen_whatsapp", "").strip()
@@ -560,6 +617,22 @@ class Deduplicator:
         
         try:
             cur = self._cursor()
+            
+            # Transacción: COMPROBAR + INSERTAR de forma atómica
+            cur.execute("BEGIN")
+            
+            # Verificación final antes de insertar
+            if titulo_hash and alert.get("departamento"):
+                cur.execute(
+                    "SELECT 1 FROM sent_alerts WHERE titulo_hash = %s AND departamento = %s LIMIT 1",
+                    (titulo_hash, alert.get("departamento"))
+                )
+                if cur.fetchone():
+                    log.info(f"[Dedup] Rechazo en transacción: ya existe titulo_hash + dept")
+                    cur.execute("ROLLBACK")
+                    return
+            
+            # Insertar nuevo registro
             cur.execute(
                 """INSERT INTO sent_alerts
                    (content_hash, titulo_hash, titulo_norm, descripcion_norm, 
@@ -580,9 +653,20 @@ class Deduplicator:
                     datetime.now().isoformat()
                 )
             )
-            self.conn.commit()
+            
+            rows_affected = cur.rowcount
+            cur.execute("COMMIT")
+            
+            if rows_affected > 0:
+                log.info(f"[Dedup] ✓ Alerta registrada para futuras dedups")
+            else:
+                log.info(f"[Dedup] ℹ️ Alerta ya existe (ON CONFLICT), no se insertó")
+                
         except Exception as e:
-            self.conn.rollback()
+            try:
+                self.conn.rollback()
+            except:
+                pass
             log.error(f"[Dedup] Error registrando alerta: {e}")
 
     # ─────────────────────────────────────────────

@@ -2,6 +2,13 @@
 Sistema de Alertas Protecta Peru
 - Rota entre regiones: procesa N paginas de cada region antes de pasar a la siguiente
 - Envia al instante despues de cada pagina, sin esperar a que termine la region
+
+MEJORAS EN DEDUPLICACIÓN:
+- NIVEL 0: URL exacta (instantáneo)
+- NIVEL 0.5: Content hash exacto (super rápido)
+- Lock de deduplicador para evitar race conditions
+- Double-check en mark_alert_sent()
+- Solo noticias < 2 horas de antigüedad
 """
 
 import os
@@ -58,6 +65,7 @@ except ImportError as e:
     WEBHOOKS_AVAILABLE = False
 
 _send_lock    = threading.Lock()
+_dedup_lock   = threading.Lock()  # ⭐ NUEVO: Lock para evitar race conditions en dedup
 _ai_semaphore = threading.Semaphore(1)
 
 
@@ -172,6 +180,24 @@ def process_page(page_name, config, classifier, dedup,
         log.error(f"[{page_name}] Error obteniendo posts: {e}")
         return 0
 
+    # ─────────────────────────────────────────────────────────────
+# DEDUP TEMPRANO RSS/SCRAPER — evita reprocesar URLs ya vistas
+# ─────────────────────────────────────────────────────────────
+    posts_nuevos = []
+
+    for post in posts:
+      with _dedup_lock:
+        if dedup.already_processed(post):
+            log.info(f"[{page_name}] RSS duplicado descartado antes de IA: {post.get('url', '')[:120]}")
+            continue
+
+        # Se marca inmediatamente para que no vuelva a entrar en el siguiente polling
+        dedup.mark_processed(post)
+
+        posts_nuevos.append(post)
+
+    posts = posts_nuevos
+
     if not posts:
         if Config.USE_RSS_FEED:
             log.info(f"[{page_name}] 0 posts desde RSS bundle")
@@ -212,12 +238,14 @@ def process_page(page_name, config, classifier, dedup,
             )
             continue
 
-        if dedup.is_duplicate_alert(alert):
-            log.info(
-                f"[{page_name}] DUPLICADO — ya enviado: "
-                f"dept={alert.get('departamento','?')} sub={alert.get('subcategoria','?')}"
-            )
-            continue
+        # ⭐ LOCK: Verificar dedup con exclusión mutua
+        with _dedup_lock:
+            if dedup.is_duplicate_alert(alert):
+                log.info(
+                    f"[{page_name}] DUPLICADO — ya enviado: "
+                    f"dept={alert.get('departamento','?')} sub={alert.get('subcategoria','?')}"
+                )
+                continue
 
         cliente = alert.get("cliente", "")
         groups  = router.get_whatsapp_groups(cliente)
@@ -248,8 +276,9 @@ def process_page(page_name, config, classifier, dedup,
             new_id = queue.push(group, wa_msg, image_url, alert)
             queued_ids.append(new_id)
 
-        # Marcar inmediatamente para que la misma noticia de otra página no pase el dedup
-        dedup.mark_alert_sent(alert)
+        # ⭐ LOCK: Marcar con exclusión mutua para evitar race conditions
+        with _dedup_lock:
+            dedup.mark_alert_sent(alert)
 
         if getattr(config, "SHEETS_ENABLED", False):
             sheets_row = formatter.format_sheets_row(alert, post, config)

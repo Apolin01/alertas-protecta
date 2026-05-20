@@ -6,12 +6,16 @@ El sistema usa bundles (paquetes) que contienen grupos de Facebook centralizados
 Cada bundle corresponde a una región/cliente.
 
 Interfaz compatible con FacebookScraper para integración en main.py.
+
+FILTROS APLICADOS:
+- Solo noticias con antigüedad <= 2 horas (recent news only)
+- No envía noticias antiguas/archivadas
 """
 
 import os
 import logging
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional
 from config import Config
 
@@ -32,16 +36,17 @@ def _get_auth_header() -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def get_bundle_items(bundle_id: str, limit: int = 50) -> Optional[List[Dict]]:
+def get_bundle_items(bundle_id: str, limit: int = 50, max_age_hours: int = 2) -> Optional[List[Dict]]:
     """
     Obtiene los items (noticias) de un bundle específico.
     
     Args:
         bundle_id: ID del bundle en rss.app
         limit: Máximo de items a retornar
+        max_age_hours: Máxima antigüedad de noticias en horas (default 2h)
         
     Returns:
-        Lista de items o None si hay error
+        Lista de items filtrados por antigüedad o None si hay error
     """
     url = f"{RSS_API_BASE}/bundles/{bundle_id}"
     headers = _get_auth_header()
@@ -54,11 +59,46 @@ def get_bundle_items(bundle_id: str, limit: int = 50) -> Optional[List[Dict]]:
         data = response.json()
         items = data.get("items", [])
         
-        log.info(f"[RSS] Bundle {bundle_id} devolvió {len(items)} items")
+        log.info(f"[RSS] Bundle {bundle_id} devolvió {len(items)} items (sin filtrar)")
         
-        # Convertir a formato normalizado
+        # Filtrar por antigüedad (solo últimas 2 horas)
+        now = datetime.now(timezone.utc)
+        cutoff_time = now - timedelta(hours=max_age_hours)
+        
         normalized_items = []
+        filtered_out = 0
+        
         for item in items[:limit]:
+            # Obtener fecha de publicación
+            date_str = item.get("date_published", "")
+            if date_str:
+                try:
+                    # Parsear ISO format: "2026-05-19T14:30:00Z"
+                    if date_str.endswith("Z"):
+                        item_date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                    else:
+                        item_date = datetime.fromisoformat(date_str)
+                    
+                    # Si no tiene timezone, asumir UTC
+                    if item_date.tzinfo is None:
+                        item_date = item_date.replace(tzinfo=timezone.utc)
+                    
+                    # Filtrar por antigüedad
+                    if item_date < cutoff_time:
+                        age_hours = (now - item_date).total_seconds() / 3600
+                        log.debug(f"[RSS] Noticia descartada (antigüedad {age_hours:.1f}h): {item.get('title', '')[:50]}")
+                        filtered_out += 1
+                        continue
+                    
+                except Exception as e:
+                    log.warning(f"[RSS] Error parseando fecha '{date_str}': {e} — ignorando noticia")
+                    filtered_out += 1
+                    continue
+            else:
+                log.warning("[RSS] Noticia sin fecha de publicación — descartada")
+                filtered_out += 1
+                continue
+            
             normalized_items.append({
                 "id": item.get("url"),  # URL sirve como ID único
                 "url": item.get("url"),
@@ -71,6 +111,8 @@ def get_bundle_items(bundle_id: str, limit: int = 50) -> Optional[List[Dict]]:
                 "source": data.get("name", "Unknown"),  # Nombre del bundle como fuente
                 "bundle_id": bundle_id,
             })
+        
+        log.info(f"[RSS] Bundle {bundle_id} devolvió {len(normalized_items)} items (después de filtrar {filtered_out} antiguas)")
         
         return normalized_items
         
@@ -122,7 +164,7 @@ def fetch_all_bundles() -> Dict[str, List[Dict]]:
     
     # Iterar sobre cada bundle configurado
     for client, bundle_id in Config.RSS_BUNDLES.items():
-        items = get_bundle_items(bundle_id)
+        items = get_bundle_items(bundle_id, max_age_hours=2)
         if items:
             results[client] = items
             log.info(f"[RSS] ✓ {client}: {len(items)} items")
