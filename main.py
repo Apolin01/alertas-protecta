@@ -72,6 +72,50 @@ _ai_semaphore = threading.Semaphore(1)
 def now_peru() -> datetime:
     return datetime.now(timezone(timedelta(hours=-5)))
 
+def _should_send_to_nacional(alert: dict, config: Config) -> bool:
+    """
+    Filtra si una alerta debe ir al grupo NACIONAL.
+    Verifica: departamento permitido + categoría + nivel mínimo.
+    """
+    cliente = alert.get("cliente", "").strip()
+    
+    # Si NO es Coyuntura Nacional, no va a NACIONAL
+    if cliente != "Ninguno (Coyuntura Nacional)":
+        return False
+    
+    # Filtro 1: Departamento permitido
+    dept = (alert.get("departamento") or "").upper().strip()
+    if dept not in config.NACIONAL_ALLOWED_DEPTS:
+        log.info(
+            f"[NACIONAL FILTRO] ✗ Departamento '{dept}' no permitido. "
+            f"Permitidos: {config.NACIONAL_ALLOWED_DEPTS}"
+        )
+        return False
+    
+    # Filtro 2: Categoría política permitida
+    cat = (alert.get("categoria") or "").lower().strip()
+    allowed_cats = [c.lower() for c in config.NACIONAL_ALLOWED_CATEGORIES]
+    if not any(ac in cat for ac in allowed_cats):
+        log.info(
+            f"[NACIONAL FILTRO] ✗ Categoría '{cat}' no es política. "
+            f"Permitidas: {config.NACIONAL_ALLOWED_CATEGORIES}"
+        )
+        return False
+    
+    # Filtro 3: Nivel mínimo (ALRT o CRIT, no INFO)
+    nivel = alert.get("nivel", "INFO")
+    nivel_orden = {"INFO": 0, "ALRT": 1, "CRIT": 2}
+    nivel_min_orden = nivel_orden.get(config.NACIONAL_MIN_LEVEL, 1)
+    if nivel_orden.get(nivel, 0) < nivel_min_orden:
+        log.info(
+            f"[NACIONAL FILTRO] ✗ Nivel '{nivel}' < mínimo '{config.NACIONAL_MIN_LEVEL}'"
+        )
+        return False
+    
+    log.info(
+        f"[NACIONAL FILTRO] ✓ ACEPTADA: {dept} | {cat} | {nivel}"
+    )
+    return True
 
 def heartbeat(suffix: str = ""):
     """Pinga al watchdog externo (healthchecks.io / UptimeRobot Heartbeat).
@@ -267,6 +311,12 @@ def process_page(page_name, config, classifier, dedup,
 
         log.debug(f"TABLA: {tabla_msg}")
         log.debug(f"WHATSAPP: {wa_msg}")
+
+        # ⭐ NUEVO: Filtro de NACIONAL — solo política importante
+        if "Coyuntura Nacional" in (groups or []):
+            if not _should_send_to_nacional(alert, config):
+                log.info(f"[{page_name}] NACIONAL RECHAZADA — no cumple filtros")
+                continue
 
         if not groups:
             log.warning(f"[{page_name}] Sin grupo WhatsApp para cliente '{cliente}' — no se envia")

@@ -808,6 +808,26 @@ class Config:
             "HUARAL": ["ACOS", "CHANCAY", "CHICAMA", "HUARAL", "OQUENDO", "SANTA ROSA DE QUIVES", "VEINTISEÍS DE OCTUBRE"],
         },
     }
+    # ─────────────────────────────────────────────
+    # REGLAS DE COYUNTURA NACIONAL
+    # Solo LIMA va a NACIONAL (política de Lima)
+    # ─────────────────────────────────────────────
+    NACIONAL_ALLOWED_DEPTS = [
+        "NACIONAL",  # Política nacional pura
+        "LIMA",      # Solo capital
+    ]
+    
+    # Subcategorías que SÍ se envían a NACIONAL (filtro de política)
+    NACIONAL_ALLOWED_CATEGORIES = [
+        "Coyuntura Politica",
+        "Coyuntura Social",
+        "Protestas, Paros y Bloqueos",
+    ]
+    
+    # Nivel mínimo para NACIONAL (solo ALRT y CRIT, no INFO)
+    NACIONAL_MIN_LEVEL = "ALRT"  # Solo alertas importantes
+
+
 
     # ─────────────────────────────────────────────
     # WEBHOOKS (WEBHOOK_SERVER)

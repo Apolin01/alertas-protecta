@@ -67,35 +67,44 @@ def get_bundle_items(bundle_id: str, limit: int = 50, max_age_hours: int = 2) ->
         
         normalized_items = []
         filtered_out = 0
+        rejected_no_date = 0
         
         for item in items[:limit]:
+            title_preview = item.get('title', 'Sin título')[:70]
+            
             # Obtener fecha de publicación
-            date_str = item.get("date_published", "")
-            if date_str:
-                try:
-                    # Parsear ISO format: "2026-05-19T14:30:00Z"
-                    if date_str.endswith("Z"):
-                        item_date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-                    else:
-                        item_date = datetime.fromisoformat(date_str)
-                    
-                    # Si no tiene timezone, asumir UTC
-                    if item_date.tzinfo is None:
-                        item_date = item_date.replace(tzinfo=timezone.utc)
-                    
-                    # Filtrar por antigüedad
-                    if item_date < cutoff_time:
-                        age_hours = (now - item_date).total_seconds() / 3600
-                        log.debug(f"[RSS] Noticia descartada (antigüedad {age_hours:.1f}h): {item.get('title', '')[:50]}")
-                        filtered_out += 1
-                        continue
-                    
-                except Exception as e:
-                    log.warning(f"[RSS] Error parseando fecha '{date_str}': {e} — ignorando noticia")
+            date_str = item.get("date_published", "").strip() if item.get("date_published") else ""
+            
+            # ⚠️ CRÍTICO: Si NO tiene fecha, RECHAZAR (no asumir reciente)
+            if not date_str:
+                log.warning(f"[RSS] ❌ RECHAZADA (sin fecha): {title_preview}")
+                rejected_no_date += 1
+                continue
+            
+            try:
+                # Parsear ISO format: "2026-05-19T14:30:00Z"
+                if date_str.endswith("Z"):
+                    item_date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                else:
+                    item_date = datetime.fromisoformat(date_str)
+                
+                # Si no tiene timezone, asumir UTC
+                if item_date.tzinfo is None:
+                    item_date = item_date.replace(tzinfo=timezone.utc)
+                
+                # Filtrar por antigüedad
+                if item_date < cutoff_time:
+                    age_hours = (now - item_date).total_seconds() / 3600
+                    log.warning(f"[RSS] ❌ RECHAZADA (antigüedad {age_hours:.1f}h > {max_age_hours}h): {title_preview}")
                     filtered_out += 1
                     continue
-            else:
-                log.warning("[RSS] Noticia sin fecha de publicación — descartada")
+                
+                # ✅ ACEPTADA: Tiene fecha reciente (< 2h)
+                age_hours = (now - item_date).total_seconds() / 3600
+                log.debug(f"[RSS] ✅ ACEPTADA ({age_hours:.1f}h): {title_preview}")
+                
+            except Exception as e:
+                log.warning(f"[RSS] ❌ ERROR parseando fecha '{date_str}': {e} — rechazando: {title_preview}")
                 filtered_out += 1
                 continue
             
@@ -112,7 +121,12 @@ def get_bundle_items(bundle_id: str, limit: int = 50, max_age_hours: int = 2) ->
                 "bundle_id": bundle_id,
             })
         
-        log.info(f"[RSS] Bundle {bundle_id} devolvió {len(normalized_items)} items (después de filtrar {filtered_out} antiguas)")
+        log.info(
+            f"[RSS] Bundle {bundle_id}: "
+            f"✅ {len(normalized_items)} aceptadas | "
+            f"❌ {filtered_out} antiguas | "
+            f"❌ {rejected_no_date} sin fecha"
+        )
         
         return normalized_items
         
