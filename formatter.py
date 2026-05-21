@@ -150,7 +150,8 @@ class AlertFormatter:
     # Siempre exactamente 6 underscores (7 columnas).
     # ─────────────────────────────────────────────────────────────
     def format_tabla(self, alert: dict, post: dict, config=None) -> str:
-        fecha = alert.get("fecha_str") or _now_peru("%d-%m-%y")
+        # SIEMPRE usar fecha del servidor (hoy), no fecha de publicación
+        fecha = _now_peru("%d-%m-%y")
 
         dept = alert.get("departamento") or ""
         prov = alert.get("provincia") or ""
@@ -185,7 +186,8 @@ class AlertFormatter:
     #   NACIONAL NACIONAL (caso especial)
     # ─────────────────────────────────────────────────────────────
     def format_whatsapp(self, alert: dict, post: dict, config=None) -> str:
-        fecha = alert.get("fecha_str") or _now_peru("%d-%m-%y")
+        # SIEMPRE usar fecha del servidor (hoy), no fecha de publicación
+        fecha = _now_peru("%d-%m-%y")
 
         dept = alert.get("departamento") or ""
         prov = alert.get("provincia") or ""
@@ -209,8 +211,9 @@ class AlertFormatter:
         titulo  = str(alert.get("titulo", "") or "").strip()
         resumen = str(alert.get("resumen_whatsapp", "") or "").strip()
 
-        # Combinar titulo + resumen
-        cuerpo = f"{titulo} {resumen}".strip() if titulo else resumen
+        # USAR SOLO resumen (no concatenar titulo + resumen para evitar repetición)
+        # Si no hay resumen, usar titulo como fallback
+        cuerpo = resumen if resumen else titulo
 
         fuente_raw = post.get("url") or alert.get("source_url", "")
         fuente     = self.shorten_url(fuente_raw) if fuente_raw else ""
@@ -225,7 +228,8 @@ class AlertFormatter:
     # Formato campo "Insertar noticia" del Google Form
     # ─────────────────────────────────────────────────────────────
     def format_noticia_tabla(self, alert: dict, post: dict, config=None) -> str:
-        fecha        = alert.get("fecha_str") or _now_peru("%d-%m-%y")
+        # SIEMPRE usar fecha del servidor (hoy), no fecha de publicación
+        fecha        = _now_peru("%d-%m-%y")
         region       = alert.get("region", "").upper().replace(" ", "_")
         provincia    = alert.get("provincia", "").upper().replace(" ", "_")
         distrito     = alert.get("distrito", "").upper().replace(" ", "_")

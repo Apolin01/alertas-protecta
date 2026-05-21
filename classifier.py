@@ -253,6 +253,7 @@ CATEGORIAS (usar EXACTAMENTE estos nombres):
 
 PALABRAS_CLAVE (SIEMPRE 3 — obligatorio):
 NUNCA devuelvas menos de 3.
+NUNCA incluir palabras genericas como: UBICACION, LUGAR, ZONA, EVENTO, INFORMACION, NOTICIA, ALERTA, REPORTE, etc.
 Preferentes (usar si aplica): DETENCION, HOMICIDIO, SEGURIDAD, AGRO, AGRICULTORES, AGUA, MEDIOAMBIENTE, SOCIAL, POLITICA, SALUD, DENGUE, FENOMENO DEL NINO, ECONOMIA, EXPORTACIONES.
 - Una palabra: MAYUSCULAS normales (HOMICIDIO, AGUA, SEGURIDAD).
 - Compuestas o frases: CamelCase (PozoDeAgua, ObrasPorImpuesto, NuevosRiegos).
@@ -471,8 +472,14 @@ class AlertClassifier:
             alert = fix_dept_by_city(alert)
             # Correccion dura por departamento + limpiar NO ESPECIFICA + filtro ubicacion
             alert = fix_client_by_dept(alert)
-            # Correccion fina por provincia/distrito (mas granular que dept)
+            # Correccion fina por provincia/distrito (mas granular que dept) — SIEMPRE ULTIMO
             alert = fix_client_by_provincia(alert)
+            
+            # Validacion final: si provinicia es HUARMEY, asegurar ANCASH y cliente correcto
+            prov_check = (alert.get("provincia") or "").upper().strip()
+            if prov_check == "HUARMEY":
+                alert["departamento"] = "ANCASH"
+                alert["cliente"] = "Agricola Huarmey"
 
             alert["source_url"]  = post.get("url", "")
             alert["source_page"] = post.get("source_page", "")
