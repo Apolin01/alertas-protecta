@@ -5,6 +5,8 @@ Soporta: Groq, Gemini, Claude, OpenRouter.
 
 import json
 import logging
+import time
+from pathlib import Path
 import requests
 from config import Config
 
@@ -18,13 +20,23 @@ LIMA_PROVINCIAS_OK = {
 }
 
 def is_lima_valida(alert: dict) -> bool:
+    """
+    Filtra alertas de Lima salvo provincias rurales operacionales.
+    Usa igualdad estricta (no substring) para evitar falsos positivos como
+    "HUAURA" matcheando "HUAURALA" o "LIMA" matcheando cualquier string que la contenga.
+    """
     departamento = (alert.get("departamento") or "").upper().strip()
-    if "LIMA" not in departamento:
+    # Solo aplicar filtro si dept es exactamente LIMA (no "LIMA NORTE", "METROPOLITANA DE LIMA", etc.)
+    if departamento != "LIMA":
         return True
     provincia = (alert.get("provincia") or "").upper().strip()
     region    = (alert.get("region") or "").upper().strip()
+    # Igualdad estricta contra el set de provincias permitidas
+    if provincia in LIMA_PROVINCIAS_OK or region in LIMA_PROVINCIAS_OK:
+        return True
+    # Fallback: también aceptar si la región es "LIMA <PROVINCIA>"
     for zona in LIMA_PROVINCIAS_OK:
-        if zona in provincia or zona in region:
+        if region == f"LIMA {zona}":
             return True
     log.info(
         f"Filtro Lima: descartando Lima sin provincia de operacion "
@@ -123,6 +135,7 @@ PROVINCIA_TO_CLIENT = {
     "BARRANCA": "Agrícola Santa Azul",
     "SUPE":     "Agrícola Santa Azul",
     "HUAURA":   "Agrícola Santa Azul",
+    "HUARAL":   "Agrícola Santa Azul",  # ⭐ Fix #7: HUARAL pasaba filtro Lima pero no tenía cliente
     "HUARMEY":  "Agrícola Huarmey",
 }
 
@@ -222,190 +235,16 @@ def fix_client_by_dept(alert: dict) -> dict:
 # ─────────────────────────────────────────────────────────────
 # PROMPT
 # ─────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """Eres un clasificador de alertas operacionales para Protecta Peru. Analizas posts de Facebook y devuelves SOLO JSON valido (sin markdown, sin texto extra):
-
-{
-  "nivel": "CRIT|ALRT|INFO|IGNORAR",
-  "cliente": "<cliente valido>",
-  "rubro": "No es un rubro|Agroindustria|Hidrocarburos|Mineria|Pesca|Otros",
-  "relevancia": "Alto|Medio|Bajo",
-  "tipo": "Noticia|Incidente",
-  "region": "<DEPARTAMENTO o DEPARTAMENTO PROVINCIA>",
-  "departamento": "<MAYUS SIN TILDES. NACIONAL si alcance nacional. Vacio solo si totalmente desconocido>",
-  "provincia":   "<MAYUS SIN TILDES. Si no se menciona: mismo que departamento. Si nacional: NACIONAL>",
-  "distrito":    "<MAYUS SIN TILDES. Si no se menciona: mismo que provincia. Si nacional: ''>",
-  "fecha_str": "<DD-MM-AA>",
-  "categoria": "<una de las 6 categorias>",
-  "palabras_clave": ["<EXACTAMENTE 3 — nunca menos>"],
-  "titulo": "<titular>",
-  "resumen_whatsapp": "<max 2 oraciones, telegrama, sin emojis>",
-  "subcategoria": "<MAYUSCULAS-CON-GUIONES>",
-  "tags": ["PALABRAS","CLAVE"]
-}
-
-CATEGORIAS (usar EXACTAMENTE estos nombres):
-- Agro-Agua-Medioambiente: agro, agua, medioambiente, inundaciones, sismos, agroindustria
-- Coyuntura Social: conflictos sociales, reclamos, denuncias, accidentes transito, conflictos laborales, festividades
-- Coyuntura Politica: funcionarios publicos, instituciones, corrupcion, politica regional/nacional
-- Economia-Desarrollo: obras infraestructura, indicadores economicos, inversiones, nuevos proyectos
-- Protestas, Paros y Bloqueos: protestas, paros, bloqueos, huelgas
-- Seguridad y delincuencia: detenciones, bandas, robos, homicidios, extorsion, violencia, balaceras
-
-PALABRAS_CLAVE (SIEMPRE 3 — obligatorio):
-NUNCA devuelvas menos de 3.
-NUNCA incluir palabras genericas como: UBICACION, LUGAR, ZONA, EVENTO, INFORMACION, NOTICIA, ALERTA, REPORTE, etc.
-Preferentes (usar si aplica): DETENCION, HOMICIDIO, SEGURIDAD, AGRO, AGRICULTORES, AGUA, MEDIOAMBIENTE, SOCIAL, POLITICA, SALUD, DENGUE, FENOMENO DEL NINO, ECONOMIA, EXPORTACIONES.
-- Una palabra: MAYUSCULAS normales (HOMICIDIO, AGUA, SEGURIDAD).
-- Compuestas o frases: CamelCase (PozoDeAgua, ObrasPorImpuesto, NuevosRiegos).
-- Nombres de personas: CamelCase (JorgeHurtado, CarlosZegarra, LuzCanales).
-- Usar HOMICIDIO en lugar de ASESINATO. En homicidios NO incluir nombre de victimas.
-- Conflicto laboral: LABORAL + sindicato (SUTEP, CGTP, FETSA) o SUNAFIL si se menciona.
-- AGRO = agroindustria; AGRICULTORES = pequenos productores con dificultades economicas.
-- Si la noticia ocurre en zona del cliente o lo mencionan, incluir el cliente:
-  Mineria: ANTAMINA, YANACOCHA, NEWMONT, BECHTEL, CONGA.
-  Agro Sur (ICA/Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY-FARMS, SUN-FRUITS, VANGUARD, RVR, UVICA, CAMPOS-DEL-SUR, DON-LUIS, DON-RICARDO.
-  Agro Norte (La Libertad/costa): CASA-GRANDE, DANPER, MISSION, HORTIFRUT, GREEN-PERU, HASS, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA, LAREDO, ADAS, CAMPO-ANDINO.
-  Otros: PETROTAL, AGRICOLA-SANTA-AZUL.
-- Abreviaciones si aparecen literalmente en el texto: CODEHICA, CNDDHH, SEDYS, FETSA, CAMPOSOL, SITECASA-CAMPOSOL, CNUL, CPUL-ICA, STCCI, SUTEP, CGTP, TUAGRAP.
-
-TITULO:
-- Una oracion estilo titular. Primera letra y nombres propios en mayuscula.
-- PROHIBIDO: CamelCase, todo en mayusculas, caracteres : ; ! ?
-- NO incluir DD-MM-AA salvo que aparezca literalmente en el titular original.
-- Ej: "Buscan mineros perdidos en la sierra", "Asaltan a familia en Viru", "Regidora pierde dedo tras agresion", "Choque de camion y combi en via".
-
-═══════════════════════════════════════════════════════════════
-NOMENCLATURA Y EMOJIS — ESTRUCTURA DEL MENSAJE WHATSAPP
-═══════════════════════════════════════════════════════════════
-
-El formato WhatsApp DEBE seguir OBLIGATORIAMENTE esta estructura:
-*[NOMENCLATURA EMOJI] - [DD-MM-AA] [UBICACION] - [PALABRAS-CLAVE]* [TITULO Y RESUMEN] - *FUENTE:*
-
-REGLA CRÍTICA DE FORMATO:
-- Cuando NO hay mención específica del lugar, NUNCA REPETIR palabras en el formato WhatsApp
-  ✗ MAL: "ICA ICA" o "NACIONAL NACIONAL"
-  ✓ CORRECTO: "ICA Ciudad de Ica" (cuando se especifica el distrito)
-  ✓ CORRECTO: "ICA Provincia de ICA" (cuando es relevante especificar)
-- Para el formato TABLA sí se puede REPETIR si es necesario
-- El Distrito es OBLIGATORIO en la salida si existe, para todas las provincias
-
-DEFINICION DE NIVELES Y NOMENCLATURA:
-
-INFO 🟢 (Verde — Informativo)
-Cuestiones informativas, proyectos, coyuntura local que NO implica violencia, paro ni amenaza inminente a operaciones.
-También: noticias sobre sostenibilidad y responsabilidad social de empresas clientes.
-ESTRUCTURA: *INFO 🟢 - [FECHA] [UBICACION] - [PALABRAS-CLAVE]* [TITULO] [RESUMEN] - *FUENTE:*
-EJEMPLO: *INFO 🟢 - 28-02-25 ANCASH SAN MARCOS - HOSTIGAMIENTO - DIVERSIDAD - INCLUSION* Antamina refuerza lucha contra el hostigamiento laboral. En el Día de la Lucha contra el Hostigamiento Sexual Laboral, la empresa destacó su compromiso con un entorno de trabajo seguro mediante su programa +VOCES. - *FUENTE:*
-
-ALRT 🟡 (Amarillo — Alerta)
-Cuestiones que PODRÍAN repercutir en la empresa cliente, pero aún no la afecta de manera directa o es probable pero indirecto.
-Incluye: comisiones/reuniones sobre temas relevantes donde se menciona a la empresa, anuncios de protestas (pero no CONTRA la empresa directamente).
-También: desastres naturales CERCANOS a operaciones o áreas de influencia (huaicos, derrumbes) que NO afecten DIRECTAMENTE la zona operativa.
-- Ejemplo: Todo el camino al concentraducto o mineroducto, PERO QUE NO AFECTA DIRECTAMENTE ESA INFRAESTRUCTURA.
-ESTRUCTURA: *ALRT 🟡 - [FECHA] [UBICACION] - [PALABRAS-CLAVE]* [TITULO] [RESUMEN] - *FUENTE:*
-EJEMPLO: *ALRT 🟡 - 28-02-25 ANCASH HUARMEY - ARSENICO - CONTAMINACION - SALUD* Problema de arsénico sigue afectando Huarmey. A pesar de los esfuerzos de las autoridades, la fuente de contaminación no ha sido identificada y la exposición continúa, poniendo en riesgo la salud de la población. - *FUENTE:*
-
-CRIT 🔴 (Rojo — Crítico/Operacional)
-Impacto DIRECTO en las operaciones de la empresa. Denuncias, protestas o conflictos DIRECTOS CONTRA la empresa cliente.
-Incluye: desastres naturales que afectan o dañan las vías hacia operaciones, bloqueos de accesos, daño a infraestructura.
-También: eventos en zonas de alta relevancia (Ayash, Juprog, Carhuayoc, Huaripampa, Pichiu, Llata para ANTAMINA) que representen riesgo.
-ESTRUCTURA: *CRIT 🔴 - [FECHA] [UBICACION] - [PALABRAS-CLAVE]* [TITULO] [RESUMEN] - *FUENTE:*
-EJEMPLO: *CRIT 🔴 - 28-02-25 ANCASH SAN MARCOS - ARSENICO - CONTAMINACION - SALUD* Solicitan emergencia ambiental en zona de Antamina. La congresista Kelly Portalatino ha presentado una moción para declarar en emergencia ambiental y sanitaria a San Marcos debido a la presencia de arsénico en la población expuesta a la actividad minera de Antamina. - *FUENTE:*
-
-═══════════════════════════════════════════════════════════════
-REGLAS DE UBICACIÓN Y DISTRITO — OBLIGATORIO EXTRAER BIEN
-═══════════════════════════════════════════════════════════════
-
-REGLA 1 — ESTRUCTURA OBLIGATORIA DE UBICACIÓN (CRÍTICO):
-  departamento: SIEMPRE mayúsculas, sin tildes. Nunca "NO ESPECIFICA"/"DESCONOCIDO".
-  provincia: SIEMPRE mayúsculas, sin tildes. Si no se menciona → IGUAL al departamento.
-  distrito: SIEMPRE mayúsculas, sin tildes. Si no se menciona → IGUAL a la provincia.
-  EXCEPCIÓN NACIONAL: departamento="NACIONAL", provincia="NACIONAL", distrito=""
-
-REGLA 2 — EXTRACCIÓN DE DISTRITO (ES LO MÁS IMPORTANTE):
-  El DISTRITO es el nivel administrativo MÁS ESPECÍFICO (pueblo, localidad, comunidad).
-  Si el texto menciona: pueblo, localidad, comunidad, anexo, rondas → ESO ES EL DISTRITO.
-  Ejemplos:
-    - "En Ayash (Ancash Huaraz)" → departamento=ANCASH, provincia=HUARAZ, distrito=AYASH
-    - "En Pichiu, provincia Huaraz" → departamento=ANCASH, provincia=HUARAZ, distrito=PICHIU
-    - "Protesta en Llata" → departamento=ANCASH (por Antamina), provincia=HUARAZ, distrito=LLATA
-    - "Trabajador en Huaripampa" → departamento=ANCASH, provincia=HUARAZ, distrito=HUARIPAMPA
-  NUNCA repetir: "HUARAZ HUARAZ" o "ICA ICA" → si provincia=ICA (ciudad), usa el nombre específico.
-
-REGLA 3 — DISTRITOS CRÍTICOS POR ZONA (MÁXIMA PRIORIDAD):
-  ANCASH/HUARAZ/ANTAMINA → Distritos clave: AYASH, JUPROG, CARHUAYOC, HUARIPAMPA, PICHIU, LLATA.
-    Estos distritos tienen relevancia ROJA para Antamina. Mencionar pueblo específico = CRIT/ALRT.
-  ICA/PISCO → Distritos: PISCO, TUPAC AMARU, SAN CLEMENTE, HUANCANO, HUMAY, INDEPENDENCIA, PARACAS.
-  ICA/CHINCHA → Distritos: CHINCHA ALTA, CHINCHA BAJA, EL CARMEN, TAMBO DE MORA, CHAVIN, ALTO LARAN, GROCIO.
-  CAJAMARCA → Distritos: JAÉN, CELEDÍN, BAMBAMARCA, CHOTA, HUALGAYOC, SAN IGNACIO, CAJABAMBA.
-
-REGLA 4 — UBICACION MANDA, NO LA FUENTE. Lee el TEXTO y BUSCA MENCIONES GEOGRÁFICAS:
-  La página que publica NO determina cliente ni región. Ejemplo: página de Lima puede publicar noticias de Ancash.
-  CONOCIMIENTO GEOGRÁFICO OBLIGATORIO:
-  
-  ANCASH — Provincias: HUARAZ, AIJA, BOLOGNESI, CARHUAZ, CASMA, CORONGO, HUARI, HUARMEY, HUAYTARA, MARISCAL CASTILLA, OCROS, PALLASCA, POMABAMBA, RECUAY, SANTA, SIHUAS, TINCO, YUNGAY.
-  Ciudades principales: Huaraz (capital), Casma, Chimbote/Nuevo Chimbote (costero), Caraz, Yungay, Huari.
-  
-  CAJAMARCA — Provincias: CAJABAMBA, CELENDÍN, CHOTA, CONTUMAZÁ, HUALGAYOC, HUAMACHUCO, JAÉN, SAN IGNACIO, SAN MIGUEL, SANTA CRUZ.
-  Ciudades principales: Jaén, Cajabamba, Celedín, Bambamarca, Chota, Hualgayoc, San Ignacio.
-  
-  HUANUCO — Provincias: AMBO, DOS DE MAYO, HUACAYBAMBA, HUANUCO, HUARIACA, LEONCIO PRADO, MARAÑON, PACHITEA, PUERTO INCA, TINGO MARIA.
-  Ciudades principales: Tingo María, Huánuco (capital), Leoncio Prado.
-  
-  LA LIBERTAD — Provincias: AIJA, ASCOPE, BOLOGNESI, CHEPÉN, CHICAMA, JICAMARCA, JULCÁN, MOTUPE, OTUZCO, PACASMAYO, PATAZ, SANCHÉZ CARRIÓN, SANTIAGO DE CHUCO, TRUJILLO, VIRÚ.
-  Ciudades principales: Trujillo (capital), Virú, Chao, Ascope, Otuzco, Chepén, Pacasmayo.
-  
-  ICA — Provincias: CHINCHA, ICA, NAZCA, PALPA, PISCO.
-  Ciudades principales: Chincha, Nazca/Nasca, Pisco, Palpa, Ica (capital).
-  
-  LIMA — Provincias rurales a procesar: BARRANCA, SUPE, HUAURA, HUARAL.
-  IGNORAR: Lima ciudad, Callao, Lima sin provincia específica.
-
-REGLA 3 — MAPA FIJO DEPARTAMENTO → CLIENTE:
-  ANCASH, HUANUCO, PASCO → "Antamina".
-  CAJAMARCA → "Bechtel / Newmont" (incluye Minera Yanacocha, Newmont, Conga, Gold Fields La Cima).
-  LA LIBERTAD → "Clientes Norte" (NUNCA "Bechtel / Newmont").
-  HUANCAVELICA, JUNIN, AREQUIPA, PUNO, CUSCO → IGNORAR (salvo politica nacional).
-
-REGLA 4 — LIMA: solo procesar si menciona EXPLICITAMENTE BARRANCA, SUPE, HUAURA, HUARAL → "Agricola Santa Azul". Lima ciudad / Callao / Lima sin provincia → IGNORAR (salvo politica nacional).
-
-REGLA 5 — "Ninguno (Coyuntura Nacional)": SOLO para gobierno central (presidente, congreso, ministerios) sin mencionar region de operacion. Si menciona Ancash → Antamina. Si menciona Cajamarca → Bechtel.
-
-REGLA 6 — Sin ubicacion clara reconocible de zonas de operacion → IGNORAR. No inventar ubicaciones.
-
-REGLA 7 — EMPRESA CLIENTE NOMBRADA EXPLICITAMENTE: minimo ALRT y agregar a palabras_clave. Protesta/bloqueo/accidente/denuncia CONTRA ella → CRIT.
-  Mineria: ANTAMINA, COMPANIA MINERA ANTAMINA / YANACOCHA, MINERA YANACOCHA, NEWMONT, CONGA, BECHTEL.
-  Agro Sur (ICA/Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY FARMS, SUN FRUITS, VANGUARD, RVR, UVICA, CAMPOS DEL SUR, DON LUIS, DON RICARDO, AGROMIGIVA.
-  Agro Norte (La Libertad/costa): CASA GRANDE, DANPER, MISSION, HORTIFRUT, GREEN PERU, HASS PERU, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA FRUIT, LAREDO, ADAS, CAMPO ANDINO.
-
-NIVELES:
-- CRIT: homicidios, balaceras, denuncias a empresas cliente, bloqueos de operaciones, explosivos, derrames, secuestros, feminicidios, mineria ilegal (operativos, conflictos, denuncias), eventos en zonas criticas (Ayash, Juprog, Carhuayoc, Huaripampa, Pichiu, Llata para Antamina).
-- ALRT: accidentes en vias, huaicos, derrumbes, cortes de via, huelgas, incendios, robos a empresas, protestas, detencion de dirigentes, detenciones por extorsion / robo / delitos comunes.
-- INFO: inauguraciones, inversiones, avances de obra, reuniones con comunidades, produccion positiva, acuerdos, proyectos, politica regional.
-- IGNORAR: deportes, farandula, publicidad, sin impacto operacional, fuera de zonas de operacion, sin ubicacion clara.
-
-CLIENTES VALIDOS:
-"Ninguno (Coyuntura Nacional)" — politica nacional gobierno central.
-"Antamina" — ANCASH, HUANUCO
-"Bechtel / Newmont" — CAJAMARCA (todas sus provincias). Empresas: Minera Yanacocha, Newmont, Conga, Bechtel.
-"Petrotal" — LORETO, UCAYALI.
-"Pisco" — ICA provincia Pisco, costera pesquera.
-"Agricola Santa Azul" — LIMA: BARRANCA, SUPE, HUAURA solamente.
-"Agricola Huarmey" — ANCASH provincia HUARMEY.
-"Agricola 3P" — LA LIBERTAD.
-"Agricola Chapi" — ICA (no Pisco).
-"Campos Andino" — LA LIBERTAD costa norte.
-"Campos del Sur" — ICA / Arequipa.
-"Don Ricardo" — ICA / Arequipa zona sur.
-"Hortifrut" — LA LIBERTAD costa norte.
-"Mission" — LA LIBERTAD costa norte.
-"RVR" — ICA / Arequipa zona sur.
-"SunFruits" — LA LIBERTAD costa norte.
-"Vanguard" — ICA / La Libertad.
-"Uvica" — ICA zona sur.
-"Clientes Sur" — ICA
-"Clientes Norte" — LA LIBERTAD
-"""
+# El SYSTEM_PROMPT se carga desde prompts/classifier_prompt.md
+# para versionarlo aparte (git diff legible) y editarlo sin tocar código.
+_PROMPT_PATH = Path(__file__).parent / "prompts" / "classifier_prompt.md"
+try:
+    SYSTEM_PROMPT = _PROMPT_PATH.read_text(encoding="utf-8")
+except FileNotFoundError as _e:
+    raise RuntimeError(
+        f"No se encontró el prompt en {_PROMPT_PATH}. "
+        "Asegúrate de que prompts/classifier_prompt.md existe."
+    ) from _e
 
 USER_TEMPLATE = """Clasifica esta publicacion de Facebook.
 
@@ -435,15 +274,16 @@ class AlertClassifier:
             text=text
         )
 
+        raw = ""
         try:
-            if self.provider == "claude":
-                raw = self._call_claude(prompt)
-            elif self.provider == "gemini":
-                raw = self._call_gemini(prompt)
-            elif self.provider == "openai":
+            if self.provider == "openai":
                 raw = self._call_openai(prompt)
-            elif self.provider == "openrouter":
-                raw = self._call_openrouter(prompt)
+            elif self.provider in ("claude", "gemini", "openrouter"):
+                log.error(
+                    f"AI_PROVIDER '{self.provider}' aún NO implementado. "
+                    "Solo 'openai' está disponible. Ajusta AI_PROVIDER en .env."
+                )
+                return None
             else:
                 log.error(f"AI_PROVIDER desconocido: {self.provider}")
                 return None
@@ -453,6 +293,30 @@ class AlertClassifier:
 
             raw   = raw.replace("```json", "").replace("```", "").strip()
             alert = json.loads(raw)
+
+            # ⭐ Fix #11: Validar estructura mínima del JSON
+            if not isinstance(alert, dict):
+                log.error(f"Respuesta IA no es dict: {type(alert).__name__} | raw: {raw[:200]}")
+                return None
+            required = ("nivel", "cliente", "departamento", "titulo", "resumen_whatsapp")
+            faltantes = [c for c in required if not alert.get(c)]
+            if faltantes:
+                log.error(f"Campos obligatorios faltantes {faltantes} | raw: {raw[:200]}")
+                return None
+
+            # ⭐ Fix #9: Validar palabras_clave (debe ser lista de 3 elementos)
+            kws = alert.get("palabras_clave")
+            if not isinstance(kws, list) or len(kws) != 3:
+                log.warning(
+                    f"palabras_clave inválido (esperaba lista de 3, obtuvo {kws!r}). "
+                    "Se rellena/recorta para no romper downstream."
+                )
+                if not isinstance(kws, list):
+                    kws = []
+                # Rellenar con valores genéricos del rubro si faltan, recortar si sobran
+                while len(kws) < 3:
+                    kws.append("INFORMACION")
+                alert["palabras_clave"] = kws[:3]
 
             # Validar cliente
             if alert.get("cliente") not in self.config.CLIENTES_VALIDOS:
@@ -475,11 +339,11 @@ class AlertClassifier:
             # Correccion fina por provincia/distrito (mas granular que dept) — SIEMPRE ULTIMO
             alert = fix_client_by_provincia(alert)
             
-            # Validacion final: si provinicia es HUARMEY, asegurar ANCASH y cliente correcto
+            # Validacion final: si provincia es HUARMEY, asegurar ANCASH y cliente correcto
             prov_check = (alert.get("provincia") or "").upper().strip()
             if prov_check == "HUARMEY":
                 alert["departamento"] = "ANCASH"
-                alert["cliente"] = "Agricola Huarmey"
+                alert["cliente"] = "Agrícola Huarmey"  # ⭐ Forma canónica de CLIENTES_VALIDOS
 
             alert["source_url"]  = post.get("url", "")
             alert["source_page"] = post.get("source_page", "")
@@ -496,7 +360,6 @@ class AlertClassifier:
     # OPENAI
     # ─────────────────────────────────────────────
     def _call_openai(self, prompt: str) -> str | None:
-        import time as _time
         key   = self.config.OPENAI_API_KEY
         model = getattr(self.config, "OPENAI_MODEL", "gpt-4o-mini")
 
@@ -505,33 +368,55 @@ class AlertClassifier:
             return None
 
         for attempt in range(4):
-            resp = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type":  "application/json"
-                },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user",   "content": prompt}
-                    ],
-                    "temperature": 0.1,
-                    "max_tokens":  700,
-                },
-                timeout=30
-            )
+            try:
+                resp = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type":  "application/json"
+                    },
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user",   "content": prompt}
+                        ],
+                        # ⭐ response_format garantiza JSON válido y elimina la necesidad
+                        # de limpiar ```json``` o lidiar con texto extra del modelo.
+                        "response_format": {"type": "json_object"},
+                        # ⭐ temperature=0 para clasificación determinística (reproducible).
+                        "temperature": 0,
+                        # ⭐ Subido de 700 → 1200: el JSON tiene ~15 campos y resumen de 2 oraciones,
+                        # 700 truncaba la respuesta y rompía json.loads.
+                        "max_tokens":  1200,
+                    },
+                    timeout=30
+                )
+            except requests.exceptions.RequestException as e:
+                # Errores de red (timeout, conexión rota) → reintentar con backoff
+                wait = 5 * (attempt + 1)
+                log.warning(f"OpenAI error de red (intento {attempt+1}): {e}. Esperando {wait}s...")
+                time.sleep(wait)
+                continue
 
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             elif resp.status_code == 429:
                 retry_after = resp.headers.get("retry-after")
-                wait = int(float(retry_after)) + 2 if retry_after else 15 * (attempt + 1)
+                wait = (int(float(retry_after)) + 2) if retry_after else 15 * (attempt + 1)
                 log.warning(f"OpenAI rate limit (intento {attempt+1}). Esperando {wait}s...")
-                _time.sleep(wait)
+                time.sleep(wait)
+            elif 500 <= resp.status_code < 600:
+                # ⭐ Fix #10: Retry para 5xx transitorios (500, 502, 503, 504)
+                wait = 5 * (attempt + 1)
+                log.warning(
+                    f"OpenAI {resp.status_code} (transitorio, intento {attempt+1}). Esperando {wait}s..."
+                )
+                time.sleep(wait)
             else:
-                resp.raise_for_status()
+                # 4xx no recuperable (400 bad request, 401 auth, 403 forbidden) → fallar rápido
+                log.error(f"OpenAI error no recuperable {resp.status_code}: {resp.text[:300]}")
+                return None
 
         log.error("OpenAI: reintentos agotados.")
         return None

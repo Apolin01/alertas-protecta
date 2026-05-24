@@ -192,8 +192,10 @@ Respuesta:"""
             )
             
             if response.status_code == 200:
-                content = response.json()["choices"][0]["message"]["content"].upper()
-                if "SI" in content:
+                content = response.json()["choices"][0]["message"]["content"].strip().upper()
+                # Comparación EXACTA: evita falsos positivos como "SIN DUDA NO" matcheando "SI"
+                first_token = re.split(r'[\s.,;:!?]+', content, maxsplit=1)[0]
+                if first_token == "SI":
                     log.info(f"[Dedup] ⚡ NIVEL 6 (IA Semántica) → DUPLICADO DETECTADO")
                     return True
             return False
@@ -451,22 +453,27 @@ class Deduplicator:
         # 🔴 NIVEL 2: (Eliminado - ya cubierto por NIVEL 0.5)
         # El content_hash exacto ya se verifica en NIVEL 0.5 al inicio
         
-        # ⚡ NIVEL 2.5: ULTRA-AGRESIVO - MISMO DEPARTAMENTO + PROVINCIA EN 15 MIN
+        # ⚡ NIVEL 2.5: MISMO DEPARTAMENTO + PROVINCIA + SUBCATEGORIA EN 15 MIN
+        # Antes era solo dept+prov, lo cual marcaba como duplicado eventos DISTINTOS
+        # ocurridos en el mismo lugar (ej. robo y incendio en la misma provincia).
+        # Ahora requiere también misma subcategoria para evitar falsos positivos.
         dept = (alert.get("departamento") or "").upper().strip()
         prov = (alert.get("provincia") or "").upper().strip()
-        
-        if dept and prov:
+        sub  = (alert.get("subcategoria") or "").upper().strip()
+
+        if dept and prov and sub:
             cutoff_agressive = (datetime.now() - timedelta(hours=DEDUP_SAME_LOCATION_HOURS)).isoformat()
-            
-            # Búsqueda ultra-rápida: mismo lugar en 15 minutos
+
+            # Búsqueda: mismo lugar + misma subcategoria en 15 minutos
             cur.execute(
-                """SELECT 1 FROM sent_alerts 
-                   WHERE departamento = %s AND provincia = %s 
+                """SELECT 1 FROM sent_alerts
+                   WHERE departamento = %s AND provincia = %s
+                   AND UPPER(COALESCE(subcategoria, '')) = %s
                    AND sent_at > %s LIMIT 1""",
-                (dept, prov, cutoff_agressive)
+                (dept, prov, sub, cutoff_agressive)
             )
             if cur.fetchone():
-                log.info(f"[Dedup] ✓ NIVEL 2.5 (Mismo Lugar {dept}/{prov} en 15min) → DUPLICADO")
+                log.info(f"[Dedup] ✓ NIVEL 2.5 (Mismo Lugar+Subcat {dept}/{prov}/{sub} en 15min) → DUPLICADO")
                 return True
 
         # 🟡 NIVEL 3: Hash de título (títulos casi idénticos)
@@ -483,70 +490,61 @@ class Deduplicator:
                     return True
 
         # 🟠 NIVEL 4: Similitud Jaccard de TÍTULOS (>=50%)
-        if titulo and len(titulo) > 10:
-            dept = (alert.get("departamento") or "").upper().strip()
-            if not dept:
-                return False
-            
+        # Solo se ejecuta si hay título suficiente Y dept. Si falta algo, salta al siguiente nivel.
+        if titulo and len(titulo) > 10 and dept:
             set_titulo_nuevo = _words_set(titulo)
-            if len(set_titulo_nuevo) < 2:  # Reducido a 2 palabras (de 3)
-                return False
-            
-            cur.execute(
-                "SELECT DISTINCT titulo_norm FROM sent_alerts "
-                "WHERE departamento = %s AND sent_at > %s AND titulo_norm IS NOT NULL",
-                (dept, cutoff)
-            )
-            
-            for (titulo_norm,) in cur.fetchall():
-                if not titulo_norm:
-                    continue
-                set_existente = set(titulo_norm.split())
-                score_jaccard = _jaccard(set_titulo_nuevo, set_existente)
-                
-                # También verificar similitud de strings directa (Levenshtein)
-                titulo_norm_completo = " ".join(titulo_norm.split())[:100]
-                titulo_nuevo_norm = _normalize_text(titulo)[:100]
-                score_leven = _levenshtein_ratio(titulo_nuevo_norm, titulo_norm_completo)
-                
-                if score_jaccard >= JACCARD_THRESHOLD_TITULO:
-                    log.info(
-                        f"[Dedup] ✓ NIVEL 4 (Jaccard Título={score_jaccard:.2f}) → DUPLICADO"
-                    )
-                    return True
-                
-                if score_leven >= LEVENSHTEIN_THRESHOLD:
-                    log.info(
-                        f"[Dedup] ✓ NIVEL 4 (Levenshtein={score_leven:.2f}) → DUPLICADO"
-                    )
-                    return True
+            if len(set_titulo_nuevo) >= 2:  # Reducido a 2 palabras (de 3)
+                cur.execute(
+                    "SELECT DISTINCT titulo_norm FROM sent_alerts "
+                    "WHERE departamento = %s AND sent_at > %s AND titulo_norm IS NOT NULL",
+                    (dept, cutoff)
+                )
+
+                for (titulo_norm,) in cur.fetchall():
+                    if not titulo_norm:
+                        continue
+                    set_existente = set(titulo_norm.split())
+                    score_jaccard = _jaccard(set_titulo_nuevo, set_existente)
+
+                    # También verificar similitud de strings directa (Levenshtein)
+                    titulo_norm_completo = " ".join(titulo_norm.split())[:100]
+                    titulo_nuevo_norm = _normalize_text(titulo)[:100]
+                    score_leven = _levenshtein_ratio(titulo_nuevo_norm, titulo_norm_completo)
+
+                    if score_jaccard >= JACCARD_THRESHOLD_TITULO:
+                        log.info(
+                            f"[Dedup] ✓ NIVEL 4 (Jaccard Título={score_jaccard:.2f}) → DUPLICADO"
+                        )
+                        return True
+
+                    if score_leven >= LEVENSHTEIN_THRESHOLD:
+                        log.info(
+                            f"[Dedup] ✓ NIVEL 4 (Levenshtein={score_leven:.2f}) → DUPLICADO"
+                        )
+                        return True
 
         # 🔴 NIVEL 5: Similitud Jaccard de DESCRIPCIONES (>=55%)
-        if desc and len(desc) > 15:
-            if not dept:
-                return False
-            
+        # Solo se ejecuta si hay desc suficiente Y dept. Si falta algo, salta al NIVEL 6.
+        if desc and len(desc) > 15 and dept:
             set_desc_nuevo = _words_set(desc)
-            if len(set_desc_nuevo) < 3:  # Reducido a 3 palabras
-                return False
-            
-            cur.execute(
-                "SELECT descripcion_norm FROM sent_alerts "
-                "WHERE departamento = %s AND sent_at > %s AND descripcion_norm IS NOT NULL",
-                (dept, (datetime.now() - timedelta(hours=6)).isoformat())
-            )
-            
-            for (desc_norm,) in cur.fetchall():
-                if not desc_norm:
-                    continue
-                set_desc_existente = set(desc_norm.split())
-                score = _jaccard(set_desc_nuevo, set_desc_existente)
-                
-                if score >= JACCARD_THRESHOLD_CONTENIDO:
-                    log.info(
-                        f"[Dedup] ✓ NIVEL 5 (Jaccard DESC={score:.2f}) → DUPLICADO"
-                    )
-                    return True
+            if len(set_desc_nuevo) >= 3:  # Reducido a 3 palabras
+                cur.execute(
+                    "SELECT descripcion_norm FROM sent_alerts "
+                    "WHERE departamento = %s AND sent_at > %s AND descripcion_norm IS NOT NULL",
+                    (dept, (datetime.now() - timedelta(hours=6)).isoformat())
+                )
+
+                for (desc_norm,) in cur.fetchall():
+                    if not desc_norm:
+                        continue
+                    set_desc_existente = set(desc_norm.split())
+                    score = _jaccard(set_desc_nuevo, set_desc_existente)
+
+                    if score >= JACCARD_THRESHOLD_CONTENIDO:
+                        log.info(
+                            f"[Dedup] ✓ NIVEL 5 (Jaccard DESC={score:.2f}) → DUPLICADO"
+                        )
+                        return True
         
         # ⚡ NIVEL 6: IA FALLBACK — Comparación semántica (último recurso)
         # Se ejecuta SOLO cuando:
@@ -617,11 +615,11 @@ class Deduplicator:
         
         try:
             cur = self._cursor()
-            
-            # Transacción: COMPROBAR + INSERTAR de forma atómica
-            cur.execute("BEGIN")
-            
-            # Verificación final antes de insertar
+
+            # psycopg2 maneja transacciones implícitamente (autocommit=OFF).
+            # NO usar BEGIN/COMMIT manual — causa warnings y comportamiento indefinido.
+
+            # Verificación final antes de insertar (mismo bloque transaccional)
             if titulo_hash and alert.get("departamento"):
                 cur.execute(
                     "SELECT 1 FROM sent_alerts WHERE titulo_hash = %s AND departamento = %s LIMIT 1",
@@ -629,13 +627,13 @@ class Deduplicator:
                 )
                 if cur.fetchone():
                     log.info(f"[Dedup] Rechazo en transacción: ya existe titulo_hash + dept")
-                    cur.execute("ROLLBACK")
+                    self.conn.rollback()
                     return
-            
+
             # Insertar nuevo registro
             cur.execute(
                 """INSERT INTO sent_alerts
-                   (content_hash, titulo_hash, titulo_norm, descripcion_norm, 
+                   (content_hash, titulo_hash, titulo_norm, descripcion_norm,
                     departamento, provincia, subcategoria, cliente, resumen, url, sent_at)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (titulo_hash, departamento) DO NOTHING""",
@@ -653,19 +651,19 @@ class Deduplicator:
                     datetime.now().isoformat()
                 )
             )
-            
+
             rows_affected = cur.rowcount
-            cur.execute("COMMIT")
-            
+            self.conn.commit()
+
             if rows_affected > 0:
                 log.info(f"[Dedup] ✓ Alerta registrada para futuras dedups")
             else:
                 log.info(f"[Dedup] ℹ️ Alerta ya existe (ON CONFLICT), no se insertó")
-                
+
         except Exception as e:
             try:
                 self.conn.rollback()
-            except:
+            except Exception:
                 pass
             log.error(f"[Dedup] Error registrando alerta: {e}")
 
@@ -675,7 +673,9 @@ class Deduplicator:
     def _cleanup_old(self):
         """Limpia registros antiguos para evitar tabla gigante."""
         cutoff = (datetime.now() - timedelta(days=7)).isoformat()
-        cutoff_alerts = (datetime.now() - timedelta(hours=24)).isoformat()
+        # Margen 2x sobre DEDUP_WINDOW_HOURS para que una alerta en el borde
+        # de la ventana no sea borrada justo antes del próximo chequeo.
+        cutoff_alerts = (datetime.now() - timedelta(hours=DEDUP_WINDOW_HOURS * 2)).isoformat()
         cur = self._cursor()
         
         cur.execute("DELETE FROM processed WHERE seen_at < %s", (cutoff,))

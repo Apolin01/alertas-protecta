@@ -338,14 +338,14 @@ class FacebookScraper:
         all_posts = []
         for page_name in self.config.FACEBOOK_PAGES:
             try:
-                posts = self._fetch_posts(page_name)
+                posts = self.fetch_posts(page_name)
                 all_posts.extend(posts)
                 log.info(f"  {page_name}: {len(posts)} posts")
             except Exception as e:
                 log.error(f"  Error scrapeando {page_name}: {e}")
         return all_posts
 
-    def _fetch_posts(self, page_name: str) -> list[dict]:
+    def fetch_posts(self, page_name: str) -> list[dict]:
         """Despacha el scraping al hilo de Playwright y retorna los posts."""
         return _worker.run(lambda: self._fetch_posts_sync(page_name))
 

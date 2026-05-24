@@ -255,7 +255,7 @@ class RSSFetcher:
         
         return post
     
-    def _fetch_posts(self, client_or_bundle: str) -> List[Dict]:
+    def fetch_posts(self, client_or_bundle: str) -> List[Dict]:
         """
         Obtiene posts de un cliente (mapea a bundle ID) o directamente de un bundle ID.
         Compatible con la llamada en main.py: process_page(page_name, ...)
@@ -315,7 +315,7 @@ if __name__ == "__main__":
     print("=" * 60)
     
     fetcher = RSSFetcher()
-    posts = fetcher._fetch_posts("Antamina")
+    posts = fetcher.fetch_posts("Antamina")
     
     if posts:
         print(f"\n✓ Obtenidos {len(posts)} posts del bundle Ancash")
