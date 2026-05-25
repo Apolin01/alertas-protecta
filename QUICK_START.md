@@ -1,94 +1,123 @@
-# ⚡ INICIO RÁPIDO - 3 Opciones
+# INICIO RÁPIDO — 3 Opciones
 
-## 🟢 OPCIÓN 1: Ejecuta TODO automático (RECOMENDADO)
+**Última actualización:** 24 de Mayo, 2026
+
+---
+
+## Opción 1: Todo automático (RECOMENDADO — Windows)
 
 ```bash
 run_system.bat
 ```
 
-**Listo.** Espera 10 segundos y verás dos ventanas abiertas. El sistema comienza a funcionar automáticamente.
+Espera 10 segundos — abre dos ventanas y el sistema comienza a funcionar.
 
 ---
 
-## 🟠 OPCIÓN 2: Manual en 2 terminales
+## Opción 2: Manual en 2 terminales
 
-**Terminal 1:**
+**Terminal 1 — WhatsApp Bridge:**
 ```bash
 cd whatsapp_bridge
 node server.js
 ```
+Espera hasta ver: `✓ WhatsApp Bridge escuchando en puerto 3000`
 
-**Terminal 2:**
+**Terminal 2 — Sistema de Alertas:**
 ```bash
 python main.py
 ```
 
 ---
 
-## 🟡 OPCIÓN 3: Testing RÁPIDO (3 items nada más)
+## Opción 3: Solo Python (sin bridge — modo simulación)
 
-```bash
-python test_quick.py
+Cambiar en `.env`:
+```
+WHATSAPP_PROVIDER=simulate
 ```
 
-✓ Resultado en **30 segundos**  
-✓ Perfecto para probar cambios  
-✓ Con `--send` envía de verdad a WhatsApp:
+Luego:
 ```bash
-python test_quick.py --send
+python main.py
+```
+
+Los mensajes se muestran en logs pero **no se envían** a WhatsApp real.
+
+---
+
+## Si no ves nada en WhatsApp
+
+**1. ¿El bridge está corriendo?**
+```
+# Terminal 1 debe mostrar:
+✓ WhatsApp Bridge escuchando en puerto 3000
+```
+
+**2. ¿WhatsApp está conectado?**
+```
+# Al iniciar node server.js por primera vez, aparece un QR.
+# Escanéalo con WhatsApp → Dispositivos Vinculados → Vincular dispositivo
+```
+
+**3. ¿El proveedor es `bridge` y no `simulate`?**
+```bash
+# En .env:
+WHATSAPP_PROVIDER=bridge
+```
+
+**4. ¿Hay errores en los logs?**
+```bash
+# Ver últimas 50 líneas:
+tail -50 alertas.log
 ```
 
 ---
 
-## 🆘 Si no ves nada en WhatsApp
+## Archivos Principales
 
-1. **¿El bridge está corriendo?**
-   ```bash
-   # Terminal 1 debe mostrar:
-   # ✓ WhatsApp Bridge escuchando en puerto 3000
-   ```
-
-2. **¿Hay errores en los logs?**
-   - Revisa la terminal 2 (main.py) para ver errores
-
-3. **¿La configuración está correcta?**
-   ```bash
-   # Verifica en config.py:
-   WHATSAPP_PROVIDER = "bridge"  # (no "simulate")
-   ```
-
----
-
-## 📋 Archivos Principales
-
-| Archivo | Uso |
-|---------|-----|
-| `run_system.bat` | 🟢 Ejecutar todo (RECOMENDADO) |
-| `test_quick.py` | 🧪 Testing rápido |
-| `main.py` | Programa principal (no tocar) |
+| Archivo | Función |
+|---------|---------|
+| `run_system.bat` | Ejecutar todo (RECOMENDADO) |
+| `main.py` | Programa principal |
+| `config.py` | Bundles RSS, clientes, mapeos |
+| `.env` | Claves secretas (no commitear) |
+| `alertas.log` | Logs del sistema |
 | `GUIA_USO.md` | Documentación completa |
 
 ---
 
-## ✅ Checklist Antes de Empezar
+## Checklist Antes de Empezar
 
-- [ ] Python 3.8+ instalado (`python --version`)
-- [ ] Node.js instalado (`node --version`)
-- [ ] Dependencias: `pip install -r requirements.txt`
+- [ ] Python 3.11+ instalado (`python --version`)
+- [ ] Node.js 18+ instalado (`node --version`)
+- [ ] Dependencias Python: `pip install -r requirements.txt`
 - [ ] Dependencias Node: `cd whatsapp_bridge && npm install`
-- [ ] `config.py` tiene `WHATSAPP_PROVIDER = "bridge"`
-- [ ] `.env` tiene `OPENAI_API_KEY` (opcional pero recomendado)
+- [ ] `.env` tiene `OPENAI_API_KEY`
+- [ ] `.env` tiene `DATABASE_URL` (PostgreSQL)
+- [ ] `.env` tiene `RSS_API_KEY` y `RSS_API_SECRET`
+- [ ] `.env` tiene `BRIDGE_TOKEN`
+- [ ] `WHATSAPP_PROVIDER=bridge` en `.env`
 
 ---
 
-## 💡 Próximas Tareas
+## Comandos útiles para monitorear
 
-Después que todo esté funcionando:
+```bash
+# Ver logs en tiempo real
+tail -f alertas.log
 
-1. **Agregar más bundles** → edita `config.py` en `RSS_BUNDLES`
-2. **Cambiar frecuencia** → `INTERVAL_MINUTES = 5` (cada 5 min)
-3. **Agregar Base de Datos** → configura `DATABASE_URL` en `.env`
+# Ver solo alertas enviadas
+grep "Bridge OK\|SIMULADO" alertas.log | tail -20
+
+# Ver solo duplicados detectados
+grep "DUPLICADO\|NIVEL" alertas.log | tail -20
+
+# Ver errores
+grep "ERROR\|CRITICAL" alertas.log | tail -20
+```
 
 ---
 
-**¿Es la primera vez?** Lee [GUIA_USO.md](GUIA_USO.md) para documentación completa.
+**¿Es la primera vez?** Lee [GUIA_USO.md](GUIA_USO.md) para documentación completa.  
+**¿Problemas técnicos?** Ver tabla de resolución en [FLUJO_SISTEMA.md](FLUJO_SISTEMA.md).

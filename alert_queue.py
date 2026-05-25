@@ -16,7 +16,12 @@ log = logging.getLogger(__name__)
 
 
 def _get_conn():
-    url = os.environ["DATABASE_URL"]
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL no está configurado. "
+            "Agrega la cadena de conexión PostgreSQL en el archivo .env"
+        )
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
     return psycopg2.connect(url)

@@ -242,6 +242,7 @@ class RSSFetcher:
             "author": ", ".join([a.get("name", "") for a in item.get("authors", [])]) or "Desconocido",
             "is_video": False,  # RSS no indica si es video, asumir False
             "source": item.get("source", "RSS"),
+            "source_page": item.get("source", "RSS Bundle"),
             "bundle_id": item.get("bundle_id", ""),
             "client": client,
             "_raw": item,  # Guardar original para debugging
@@ -259,25 +260,23 @@ class RSSFetcher:
         """
         Obtiene posts de un cliente (mapea a bundle ID) o directamente de un bundle ID.
         Compatible con la llamada en main.py: process_page(page_name, ...)
-        
+
         Args:
             client_or_bundle: Nombre de cliente (ej: "Antamina") o bundleID directo
-            
+
         Returns:
             Lista de posts normalizados al formato de FacebookScraper
         """
         # Intentar mapeo cliente → bundle ID
         bundle_id = self.config.RSS_BUNDLES.get(client_or_bundle)
-        if not bundle_id:
+        if bundle_id:
+            client = client_or_bundle
+        else:
             # Si no es un cliente conocido, asumir que es un bundle ID directo
             bundle_id = client_or_bundle
-            # Hacer mapeo inverso para obtener el cliente
-            client = self.config.RSS_BUNDLES.get(client_or_bundle)
-            if not client:
-                # Fallback: usar "NACIONAL"
-                client = "NACIONAL"
-        else:
-            client = client_or_bundle
+            # Mapeo inverso bundle_id → cliente
+            bundle_to_client = {v: k for k, v in self.config.RSS_BUNDLES.items()}
+            client = bundle_to_client.get(bundle_id, "Ninguno (Coyuntura Nacional)")
         
         # Verificar cache primera vez
         if bundle_id in _bundle_items_cache:

@@ -247,20 +247,15 @@ def process_page(page_name, config, classifier, dedup,
         log.error(f"[{page_name}] Error obteniendo posts: {e}")
         return 0
 
-    # ─────────────────────────────────────────────────────────────
-# DEDUP TEMPRANO RSS/SCRAPER — evita reprocesar URLs ya vistas
-# ─────────────────────────────────────────────────────────────
+    # DEDUP TEMPRANO — evita reprocesar URLs ya vistas en el siguiente polling
     posts_nuevos = []
-
     for post in posts:
-      with _dedup_lock:
-        if dedup.already_processed(post):
-            log.info(f"[{page_name}] RSS duplicado descartado antes de IA: {post.get('url', '')[:120]}")
-            continue
-
-        # Se marca inmediatamente para que no vuelva a entrar en el siguiente polling
-        dedup.mark_processed(post)
-
+        with _dedup_lock:
+            if dedup.already_processed(post):
+                log.info(f"[{page_name}] Duplicado descartado antes de IA: {post.get('url', '')[:120]}")
+                continue
+            # Se marca inmediatamente para que no vuelva a entrar en el siguiente ciclo
+            dedup.mark_processed(post)
         posts_nuevos.append(post)
 
     posts = posts_nuevos
@@ -512,6 +507,10 @@ def run_forever():
             f"CICLO {ciclo} — {now_peru().strftime('%d-%m-%Y %H:%M')} PE\n"
             f"{'='*60}"
         )
+
+        # Limpiar cache RSS al inicio de cada ciclo para obtener noticias frescas
+        if config.USE_RSS_FEED and hasattr(fetcher, "clear_cache"):
+            fetcher.clear_cache()
 
         # ⭐ Fix #13: Healthcheck del webhook thread
         if webhook_thread is not None and not webhook_thread.is_alive():

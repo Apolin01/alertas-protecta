@@ -204,7 +204,7 @@ Respuesta:"""
         return False
     
     except Exception as e:
-        log.debug(f"[Dedup] IA fallback no disponible: {e}")
+        log.warning(f"[Dedup] IA fallback no disponible: {e}")
         return False
 
 

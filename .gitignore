@@ -5,6 +5,8 @@ __pycache__/
 *.db
 alertas.log
 credentials.json
+.venv/
+venv/
 whatsapp_bridge/.wwebjs_auth/
 whatsapp_bridge/.wwebjs_cache/
 whatsapp_bridge/node_modules/
