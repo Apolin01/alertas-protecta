@@ -2,8 +2,8 @@
 
 Sistema automatizado que monitorea noticias vía **webhooks en tiempo real** y **polling RSS**, clasifica con IA, deduplica inteligentemente y envía alertas a WhatsApp por cliente/región. Registra todo en Google Sheets.
 
-**Versión:** 2.1  
-**Última actualización:** 24 de Mayo, 2026  
+**Versión:** 2.2  
+**Última actualización:** 02 de Junio, 2026  
 **Estado:** Producción
 
 ---
@@ -81,7 +81,7 @@ Sistema automatizado que monitorea noticias vía **webhooks en tiempo real** y *
 | **CRIT** | 🔴 | Homicidios, balaceras, derrames, bloqueos operacionales, minería ilegal |
 | **ALRT** | 🟡 | Accidentes viales, huaicos, huelgas, robos, incendios, protestas |
 | **INFO** | 🟢 | Inversiones, obras, acuerdos, reuniones, producción positiva |
-| **IGNORAR** | — | Deportes, farándula, sin ubicación clara, fuera de zonas operativas |
+| **IGNORAR** | — | Deportes, farándula, turismo/recreativo, publicidad, sin ubicación clara, fuera de zonas operativas |
 
 ---
 
@@ -279,7 +279,7 @@ Policía detiene a cinco sujetos involucrados en asaltos a comercios en San Marc
 | Bechtel / Newmont | Bechtel / Newmont | Minería |
 | Clientes Sur | Clientes Sur | Agroindustria |
 | Clientes Norte | Clientes Norte | Agroindustria |
-| Agrícola Santa Azul | Agrícola Santa Azul | Agroindustria |
+| Agrícola Santa Azul | Agricola Santa Azul | Agroindustria |
 | Agrícola Huarmey | Clientes Norte | Agroindustria |
 | Pisco | Pisco | Pesca |
 | Petrotal | Petrotal | Hidrocarburos |
@@ -347,6 +347,15 @@ cd whatsapp_bridge && node server.js
 # Escanear el QR con WhatsApp si es primera vez
 ```
 
+### Grupo de WhatsApp no encontrado (error 404 del bridge)
+El nombre en `CLIENTE_TO_WHATSAPP_GROUP` debe coincidir **exactamente** con la clave en `GROUP_MAP` de `server.js` (sin tildes, mismo uso de mayúsculas). Ver sección "Clientes Configurados" para los nombres correctos.
+
+### El grupo "Coyuntura Nacional" no recibe mensajes
+Verificar en `config.py`:
+- `NACIONAL_ALLOWED_DEPTS` incluye `"NACIONAL"` y `"LIMA"`
+- `NACIONAL_ALLOWED_CATEGORIES` incluye las categorías políticas relevantes
+- `NACIONAL_MIN_LEVEL = "INFO"` (si solo llegan INFO-level, ALRT bloquea todo)
+
 ---
 
 ## Métricas de Rendimiento
@@ -372,6 +381,25 @@ cd whatsapp_bridge && node server.js
 ---
 
 ## Changelog
+
+### v2.3 (Junio 09, 2026)
+- **Filtro de empleo/reclutamiento** (`classifier.py`): convocatorias laborales, ofertas de trabajo y procesos CAS (nivel INFO) forzados a IGNORAR mediante filtro duro con constante `EMPLEO_TERMS` — no aplica a CRIT/ALRT para no bloquear accidentes laborales ni huelgas
+- **Prompt mejorado** (`prompts/classifier_prompt.md`): IGNORAR ahora lista explícitamente reclutamiento/empleo con ejemplos (oportunidad laboral, convocatoria CAS, bolsa de trabajo)
+- **Deduplicación cross-fuente** (`deduplicator.py`): NIVEL 6 (IA semántica) ahora también compara alertas de la **misma provincia** en una ventana de 2h (`DEDUP_SAME_PROVINCIA_HOURS`) sin importar la similitud léxica del título — captura el mismo evento narrado de forma muy distinta por distintas páginas (ej. "naufragio en Paracas" vs "búsqueda de pescadores" vs "familiares buscan a Kenny Díaz", los 3 reportando el mismo naufragio en San Andrés, Pisco)
+- **RSS `max_age_hours`** (`rss_fetcher.py`): ampliado de 2h a 8h en `RSSFetcher.fetch_posts()` para capturar bundles de baja frecuencia (Coyuntura Nacional, Agrícola Santa Azul)
+- **Constraint `sent_alerts`**: corregido `UNIQUE(titulo_hash, departamento)` faltante que hacía fallar `ON CONFLICT` y dejaba la deduplicación de contenido sin efecto
+- **Elecciones nacionales habilitadas** (`prompts/classifier_prompt.md`): REGLA 7 y NIVELES→INFO actualizados para que resultados ONPE/JNE, conteo de actas y declaraciones de candidatos lleguen como mínimo INFO a "Ninguno (Coyuntura Nacional)" — antes el prompt los dejaba caer en IGNORAR
+- **Enrutamiento de elecciones corregido** (`prompts/classifier_prompt.md`, REGLA 0 nueva, prioridad maxima): noticias de proceso electoral nacional van SIEMPRE a "Ninguno (Coyuntura Nacional)" / departamento=NACIONAL, evaluada ANTES que las reglas de ubicacion por departamento (REGLAS 1-9) — corrige envios incorrectos a "Bechtel / Newmont", "Antamina", "Clientes Sur", etc. cuando el conteo de votos mencionaba esos departamentos
+- **Dedup de noticias en desarrollo** (`deduplicator.py`, `_ai_are_same_event`): el prompt de IA ahora reconoce actualizaciones consecutivas de una misma cobertura en vivo (ej. resultados electorales que cambian de líder cada pocos minutos) como duplicados, no solo el mismo evento exacto
+- **Filtro de avisos municipales** (`classifier.py`): festivales, aniversarios, campañas de esterilización/vacunación de mascotas y charlas informativas (nivel INFO) forzados a IGNORAR mediante filtro duro con constante `AVISO_MUNICIPAL_TERMS` — no aplica a CRIT/ALRT para no bloquear denuncias de violencia real ni protestas. Prompt actualizado con ejemplos explícitos (Festival de la Chocoteja, campaña de esterilización, charla LEY 30364)
+- **Tráfico de terrenos → ALRT** (`classifier.py`, `prompts/classifier_prompt.md`): noticias sobre tráfico/usurpación/invasión de terrenos o venta irregular de lotes (riesgo social para zonas agrícolas) ahora se elevan de INFO a ALRT mediante filtro duro con `TRAFICO_TERRENOS_TERMS`, aunque la noticia se enfoque en un funcionario o excandidato (ej. "exalcalde entregó títulos a traficantes de terrenos en Medio Mundo")
+
+### v2.2 (Junio 02, 2026)
+- **Filtro de turismo** (`classifier.py`): contenido turístico/recreativo (cataratas, hospedaje, tours, ecoturismo, alojamiento) forzado a IGNORAR mediante filtro duro post-IA con constante `TURISMO_TERMS` — actúa como red de seguridad cuando el prompt no lo bloquea
+- **Prompt mejorado** (`prompts/classifier_prompt.md`): IGNORAR ahora lista explícitamente turismo con ejemplos (aviso de catarata con precios, publicidad de hospedaje, tours de aventura); REGLA 5 incluye excepción Huarmey (ANCASH provincia HUARMEY → "Agrícola Huarmey", no Antamina)
+- **Corregido grupo WhatsApp Santa Azul** (`config.py`): `CLIENTE_TO_WHATSAPP_GROUP["Agrícola Santa Azul"]` corregido de `"Agrícola Santa Azul"` a `"Agricola Santa Azul"` (sin tilde) para coincidir con la clave en `GROUP_MAP` de `server.js` — el grupo no recibía mensajes por este desajuste
+- **Nivel mínimo Coyuntura Nacional** (`config.py`): `NACIONAL_MIN_LEVEL` bajado de `"ALRT"` a `"INFO"` para que contenido político informativo (debates electorales, declaraciones de candidatos) llegue al grupo nacional
+- **Bloqueo Arequipa** (`classifier.py`): nueva función `fix_arequipa_block()` — Arequipa nunca va a "Clientes Sur" ni a clientes agro; única excepción es coyuntura política nacional pura
 
 ### v2.1 (Mayo 24, 2026)
 - Deduplicación ampliada a 7 niveles (añadido IA semántica)

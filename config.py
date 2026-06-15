@@ -38,9 +38,10 @@ class Config:
     RSS_BUNDLES = {
         "Antamina":                      "_vv3HkItEzKqytLHk",      # Ancash
         "Bechtel / Newmont":             "_dtKCh5CjRws0ai8H",      # Cajamarca
-        "Clientes Sur":                  "_vuHd6hNkLlFj0nPK",      # Agro Sur (Ica, Arequipa)
+        "Clientes Sur":                  "_vuHd6hNkLlFj0nPK",      # Agro Sur (solo Ica — Arequipa bloqueada, ver fix_arequipa_block)
         "Clientes Norte":                "_i5tst4lPDJ5oTSW4",      # Agro Norte (La Libertad, etc)
         "Pisco":                         "_XgBrvIyMIWm5YzLP",      # Pisco
+        "Agrícola Santa Azul":           "_oTreAE2PwVfx82Ds",      # Lima costa (Barranca, Supe, Huaura, Huaral)
         "Ninguno (Coyuntura Nacional)":  "_pM02KT2QspbdR8os",      # Coyuntura Nacional
     }
     
@@ -412,7 +413,8 @@ class Config:
         "PISCO":            ["Pisco"],
         # Agroindustria Sur
         "ICA":              ["Agrícola Chapi", "Clientes Sur"],
-        "AREQUIPA":         ["Clientes Sur"],
+        # AREQUIPA removido intencionalmente — ver fix_arequipa_block() en classifier.py.
+        # Cualquier noticia de Arequipa va a IGNORAR salvo politica nacional pura.
         # Agroindustria Norte / Lima costa
         "LA LIBERTAD":      ["Clientes Norte"],
  
@@ -434,8 +436,8 @@ class Config:
         "Bechtel / Newmont":                "Bechtel / Newmont",
         "Clientes Sur":                     "Clientes Sur",
         "Clientes Norte":                   "Clientes Norte",
-        "Agrícola Santa Azul":              "Agrícola Santa Azul",
-        "Agrícola Huarmey":                 "Clientes Norte",
+        "Agrícola Santa Azul":              "Agricola Santa Azul",
+        "Agrícola Huarmey":                 "Antamina",
         "Agrícola 3P":                      "Clientes Norte",
         "Agrícola Chapi":                   "Clientes Sur",
         "Campos Andino":                    "Clientes Norte",
@@ -583,8 +585,8 @@ class Config:
         "Protestas, Paros y Bloqueos",
     ]
     
-    # Nivel mínimo para NACIONAL (solo ALRT y CRIT, no INFO)
-    NACIONAL_MIN_LEVEL = "ALRT"  # Solo alertas importantes
+    # Nivel mínimo para NACIONAL (INFO, ALRT y CRIT pasan)
+    NACIONAL_MIN_LEVEL = "INFO"
 
 
 

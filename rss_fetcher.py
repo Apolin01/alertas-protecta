@@ -283,8 +283,10 @@ class RSSFetcher:
             log.debug(f"[RSS] Usando cache para bundle {bundle_id}")
             items = _bundle_items_cache[bundle_id]
         else:
-            # Obtener desde API
-            items = get_bundle_items(bundle_id)
+            # Obtener desde API — 8h para capturar bundles con páginas de baja frecuencia
+            # (ej. Coyuntura Nacional publica cada 3-8h, Santa Azul aún menos).
+            # URL dedup evita reenviar contenido que ya fue procesado en ciclos anteriores.
+            items = get_bundle_items(bundle_id, max_age_hours=8)
             if items:
                 _bundle_items_cache[bundle_id] = items
             else:

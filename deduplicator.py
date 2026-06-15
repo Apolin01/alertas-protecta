@@ -40,6 +40,7 @@ DEDUP_WINDOW_HOURS = 24               # ⭐ AMPLIADO: 12 → 24h (no repita en t
 DEDUP_SAME_BUNDLE_HOURS = 0.5         # 30 MINUTOS - mismo bundle = mismo evento
 DEDUP_SAME_SOURCE_HOURS = 6           # Ventana para misma fuente
 DEDUP_SAME_LOCATION_HOURS = 0.25      # 15 minutos - mismo depto + prov = probablemente dup
+DEDUP_SAME_PROVINCIA_HOURS = 2        # Ventana para comparacion semantica por IA (misma provincia)
 
 # Stopwords español + palabras frecuentes en titulares
 _STOPWORDS_ES = {
@@ -162,7 +163,14 @@ def _ai_are_same_event(titulo1: str, titulo2: str, desc1: str, desc2: str) -> bo
         config = Config()
         ai_provider = getattr(config, "AI_PROVIDER", "openai").lower()
         
-        prompt = f"""Analiza estos dos titulares de noticias. ¿Reportan el MISMO EVENTO?
+        prompt = f"""Analiza estos dos titulares/resumenes de noticias, publicados con pocos minutos de diferencia.
+¿Son la MISMA noticia o pertenecen a una MISMA historia EN DESARROLLO?
+Responde "SI" si:
+- Reportan el mismo evento (aunque con palabras distintas), O
+- Son actualizaciones consecutivas de una cobertura EN VIVO sobre el mismo tema
+  (ej. resultados electorales en tiempo real donde cambian las cifras o el candidato que lidera,
+  un incendio cuyo numero de victimas se va actualizando, una busqueda de desaparecidos con avances).
+Responde "NO" solo si son temas/eventos CLARAMENTE DISTINTOS sin relacion entre si.
 Responde con una palabra: "SI" o "NO"
 
 TITULO 1: {titulo1[:100]}
@@ -324,12 +332,41 @@ class Deduplicator:
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS descripcion_norm TEXT")
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS provincia TEXT")
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS url TEXT")
-        
+
+        # Asegurar UNIQUE constraint — CREATE TABLE IF NOT EXISTS no modifica tablas ya existentes,
+        # por lo que la constraint puede faltar si la tabla se creó con una versión anterior.
+        # Sin ella, ON CONFLICT falla y mark_alert_sent() nunca guarda nada → dedup ciego.
+        cur.execute("""
+            DELETE FROM sent_alerts
+            WHERE titulo_hash IS NOT NULL
+              AND departamento IS NOT NULL
+              AND id NOT IN (
+                SELECT MAX(id) FROM sent_alerts
+                WHERE titulo_hash IS NOT NULL AND departamento IS NOT NULL
+                GROUP BY titulo_hash, departamento
+              )
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint c
+                    JOIN pg_class t ON c.conrelid = t.oid
+                    WHERE t.relname = 'sent_alerts'
+                      AND c.conname = 'sent_alerts_titulo_hash_departamento_key'
+                ) THEN
+                    ALTER TABLE sent_alerts
+                    ADD CONSTRAINT sent_alerts_titulo_hash_departamento_key
+                    UNIQUE (titulo_hash, departamento);
+                END IF;
+            END $$;
+        """)
+
         # Índices para búsquedas rápidas
         cur.execute("CREATE INDEX IF NOT EXISTS idx_dept_sent ON sent_alerts (departamento, sent_at)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_titulo_hash ON sent_alerts (titulo_hash)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cliente_sent ON sent_alerts (cliente, sent_at)")
-        
+
         self.conn.commit()
         self._cleanup_old()
 
@@ -547,42 +584,61 @@ class Deduplicator:
                         return True
         
         # ⚡ NIVEL 6: IA FALLBACK — Comparación semántica (último recurso)
-        # Se ejecuta SOLO cuando:
-        # - Los 5 niveles anteriores fallaron
-        # - Hay similitud media (0.35+) pero no es definitoria
-        # - Mismo departamento + últimas 6 horas
-        if titulo and desc and (alert.get("departamento") or "").strip():
-            dept = (alert.get("departamento") or "").upper().strip()
+        # Caso A: similitud media (0.30-0.35) en mismo departamento + últimas 6h —
+        #         títulos casi idénticos que no llegaron al umbral exacto.
+        # Caso B: MISMA PROVINCIA en ventana corta (2h), sin importar el score —
+        #         distintas fuentes narran el MISMO EVENTO con palabras muy diferentes
+        #         (ej. "naufragio en Paracas" vs "búsqueda de pescadores" vs
+        #         "familiares buscan a Kenny Díaz" → los 3 son el mismo naufragio
+        #         en San Andrés, Pisco, pero comparten muy pocas palabras).
+        if titulo and desc and dept:
+            set_t_new = _words_set(titulo)
+
+            # Caso A: mismo departamento, ventana 6h, similitud media
             cutoff_ia = (datetime.now() - timedelta(hours=6)).isoformat()
-            
-            # Buscar candidatos con similitud media que podrían ser duplicados
             cur.execute(
                 "SELECT titulo_norm, descripcion_norm FROM sent_alerts "
                 "WHERE departamento = %s AND sent_at > %s AND titulo_norm IS NOT NULL",
                 (dept, cutoff_ia)
             )
-            
             for (titulo_existente, desc_existente) in cur.fetchall():
                 if not titulo_existente:
                     continue
-                
-                # Solo aplicar IA si hay similitud media (0.3+)
-                set_t_new = _words_set(titulo)
                 set_t_exist = set(titulo_existente.split())
                 score_medio = _jaccard(set_t_new, set_t_exist)
-                
                 if 0.30 <= score_medio < JACCARD_THRESHOLD_TITULO:
-                    # Usar IA para confirmar si es el mismo evento
                     log.debug(f"[Dedup] Comparando semánticamente (Jaccard={score_medio:.2f}): podría ser duplicado")
-                    
                     if _ai_are_same_event(
-                        titulo, 
-                        titulo_existente,
-                        desc[:150],
-                        desc_existente[:150] if desc_existente else ""
+                        titulo, titulo_existente,
+                        desc[:150], desc_existente[:150] if desc_existente else ""
                     ):
+                        log.info(f"[Dedup] ⚡ NIVEL 6 (IA Semántica, Jaccard={score_medio:.2f}) → DUPLICADO")
                         return True
-        
+
+            # Caso B: misma provincia, ventana corta, cualquier score por debajo del umbral exacto
+            if prov:
+                cutoff_prov = (datetime.now() - timedelta(hours=DEDUP_SAME_PROVINCIA_HOURS)).isoformat()
+                cur.execute(
+                    "SELECT titulo_norm, descripcion_norm FROM sent_alerts "
+                    "WHERE departamento = %s AND provincia = %s AND sent_at > %s "
+                    "AND titulo_norm IS NOT NULL ORDER BY sent_at DESC LIMIT 8",
+                    (dept, prov, cutoff_prov)
+                )
+                for (titulo_existente, desc_existente) in cur.fetchall():
+                    if not titulo_existente:
+                        continue
+                    set_t_exist = set(titulo_existente.split())
+                    score = _jaccard(set_t_new, set_t_exist)
+                    if score >= JACCARD_THRESHOLD_TITULO:
+                        continue  # ya lo hubiera atrapado NIVEL 4
+                    log.debug(f"[Dedup] Misma provincia {dept}/{prov} (Jaccard={score:.2f}): consultando IA")
+                    if _ai_are_same_event(
+                        titulo, titulo_existente,
+                        desc[:150], desc_existente[:150] if desc_existente else ""
+                    ):
+                        log.info(f"[Dedup] ⚡ NIVEL 6 (IA Semántica, misma provincia {dept}/{prov}) → DUPLICADO")
+                        return True
+
         return False
 
     def mark_alert_sent(self, alert: dict):

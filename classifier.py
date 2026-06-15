@@ -6,6 +6,7 @@ Soporta: Groq, Gemini, Claude, OpenRouter.
 import json
 import logging
 import time
+import unicodedata
 from pathlib import Path
 import requests
 from config import Config
@@ -138,6 +139,70 @@ PROVINCIA_TO_CLIENT = {
     "HUARAL":   "Agrícola Santa Azul",  # ⭐ Fix #7: HUARAL pasaba filtro Lima pero no tenía cliente
     "HUARMEY":  "Agrícola Huarmey",
 }
+
+# Términos que indican contenido turístico/recreativo sin impacto operacional.
+# Se buscan en subcategoria y palabras_clave tras la clasificación IA.
+TURISMO_TERMS = {
+    "TURISMO", "CATARATA", "CATARATAS", "ECOTURISMO",
+    "HOSPEDAJE", "ALOJAMIENTO", "RECREACION", "RECREATIVO",
+    "AVENTURA", "TOUR", "TOURS", "ATRACTIVO", "CIRCUITO",
+}
+
+# Términos que indican convocatorias/avisos de empleo sin impacto operacional.
+# Se buscan en subcategoria y palabras_clave SOLO cuando nivel == INFO, para no
+# bloquear accidentes laborales (CRIT/ALRT) ni huelgas/protestas por derechos laborales.
+EMPLEO_TERMS = {
+    "EMPLEO", "TRABAJO", "LABORAL", "RECLUTAMIENTO",
+    "POSTULACION", "POSTULA", "VACANTE", "CONTRATACION",
+}
+
+# Términos que indican avisos municipales / eventos comunitarios sin conflicto
+# social ni impacto operacional (festivales, campañas de salud/mascotas, charlas
+# informativas, ferias, talleres). Se buscan en subcategoria y palabras_clave SOLO
+# cuando nivel == INFO, para no bloquear denuncias, protestas o emergencias reales.
+AVISO_MUNICIPAL_TERMS = {
+    "FESTIVAL", "ANIVERSARIO", "CHARLA", "ESTERILIZACION", "VACUNACION",
+    "FERIA", "TALLER", "CONCURSO", "CAPACITACION", "JORNADA", "INFORMATIVA",
+}
+
+# Términos que indican trafico/usurpación de terrenos — riesgo social para zonas
+# agricolas/operativas cercanas, aunque la noticia se enfoque en un funcionario o
+# excandidato. Se buscan en titulo + resumen (sin tildes). Si la IA clasificó como
+# INFO, se eleva a ALRT (nunca se bajan niveles ya asignados como CRIT/ALRT).
+TRAFICO_TERRENOS_TERMS = (
+    "TRAFICANTE", "TRAFICO DE TERRENO", "USURPACION DE TERRENO",
+    "INVASION DE TERRENO", "VENTA IRREGULAR DE LOTE",
+)
+
+
+def _strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+
+def fix_arequipa_block(alert: dict) -> dict:
+    """
+    REGLA DURA: Arequipa NUNCA va a 'Clientes Sur' ni a ningun cliente agro.
+    Unica excepcion: coyuntura politica nacional (presidente, congreso, candidatos)
+    → 'Ninguno (Coyuntura Nacional)'. Cualquier otra cosa → IGNORAR.
+    Motivo: incidente 30-05-26 con noticia de Keiko Fujimori enviada a grupo agro sur.
+    """
+    dept = (alert.get("departamento") or "").upper().strip()
+    if dept != "AREQUIPA":
+        return alert
+
+    categoria = (alert.get("categoria") or "").lower()
+    es_politica_nacional = "coyuntura politica" in categoria
+    cliente = alert.get("cliente", "")
+
+    if es_politica_nacional and cliente == "Ninguno (Coyuntura Nacional)":
+        return alert
+
+    log.info(
+        f"Arequipa bloqueada: cliente='{cliente}' categoria='{categoria}' → IGNORAR"
+    )
+    alert["nivel"] = "IGNORAR"
+    alert["cliente"] = "Ninguno (Coyuntura Nacional)"
+    return alert
 
 
 def fix_client_by_provincia(alert: dict) -> dict:
@@ -336,14 +401,63 @@ class AlertClassifier:
             alert = fix_dept_by_city(alert)
             # Correccion dura por departamento + limpiar NO ESPECIFICA + filtro ubicacion
             alert = fix_client_by_dept(alert)
-            # Correccion fina por provincia/distrito (mas granular que dept) — SIEMPRE ULTIMO
+            # Correccion fina por provincia/distrito (mas granular que dept)
             alert = fix_client_by_provincia(alert)
-            
+
+            # ⭐ Bloqueo Arequipa — DEBE ser ultimo para que nada lo sobrescriba
+            alert = fix_arequipa_block(alert)
+
             # Validacion final: si provincia es HUARMEY, asegurar ANCASH y cliente correcto
             prov_check = (alert.get("provincia") or "").upper().strip()
             if prov_check == "HUARMEY":
                 alert["departamento"] = "ANCASH"
                 alert["cliente"] = "Agrícola Huarmey"  # ⭐ Forma canónica de CLIENTES_VALIDOS
+
+            # Filtro duro: contenido turístico/recreativo → siempre IGNORAR
+            # Opera como red de seguridad cuando el prompt no bloquea estos casos.
+            subcateg  = (alert.get("subcategoria") or "").upper()
+            kws_upper = {str(k).upper() for k in (alert.get("palabras_clave") or [])}
+            if any(t in subcateg for t in TURISMO_TERMS) or any(t in kws_upper for t in TURISMO_TERMS):
+                log.info(
+                    f"Filtro turismo: subcategoria='{alert.get('subcategoria')}' "
+                    f"kws={alert.get('palabras_clave')} → IGNORAR"
+                )
+                alert["nivel"] = "IGNORAR"
+
+            # Filtro duro: convocatorias/avisos de empleo (nivel INFO) → IGNORAR
+            # No aplica a CRIT/ALRT para no bloquear accidentes laborales o huelgas.
+            if alert.get("nivel") == "INFO" and (
+                any(t in subcateg for t in EMPLEO_TERMS) or any(t in kws_upper for t in EMPLEO_TERMS)
+            ):
+                log.info(
+                    f"Filtro empleo: subcategoria='{alert.get('subcategoria')}' "
+                    f"kws={alert.get('palabras_clave')} → IGNORAR"
+                )
+                alert["nivel"] = "IGNORAR"
+
+            # Filtro duro: avisos municipales / eventos comunitarios (nivel INFO) → IGNORAR
+            # Festivales, campañas de esterilización/vacunación, charlas informativas,
+            # ferias, talleres, etc. sin conflicto social ni impacto operacional.
+            if alert.get("nivel") == "INFO" and (
+                any(t in subcateg for t in AVISO_MUNICIPAL_TERMS) or any(t in kws_upper for t in AVISO_MUNICIPAL_TERMS)
+            ):
+                log.info(
+                    f"Filtro aviso municipal: subcategoria='{alert.get('subcategoria')}' "
+                    f"kws={alert.get('palabras_clave')} → IGNORAR"
+                )
+                alert["nivel"] = "IGNORAR"
+
+            # Filtro duro: trafico/usurpacion de terrenos (nivel INFO) → elevar a ALRT
+            # Riesgo social para zonas agricolas/operativas, aunque la noticia se
+            # enfoque en un funcionario o excandidato (no se bajan niveles CRIT/ALRT).
+            texto_completo = _strip_accents(
+                f"{alert.get('titulo','')} {alert.get('resumen_whatsapp','')}".upper()
+            )
+            if alert.get("nivel") == "INFO" and any(t in texto_completo for t in TRAFICO_TERRENOS_TERMS):
+                log.info(
+                    f"Filtro trafico de terrenos: '{alert.get('titulo')}' INFO → ALRT"
+                )
+                alert["nivel"] = "ALRT"
 
             alert["source_url"]  = post.get("url", "")
             alert["source_page"] = post.get("source_page", "")
