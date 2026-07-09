@@ -592,15 +592,24 @@ def run_forever():
                     log.error(f"[WEBHOOKS] Error procesando: {e}")
 
         # Reintentar alertas que fallaron por bridge caído en ciclos anteriores
-        retry_unsent(queue, wa_sender, dedup)
+        try:
+            retry_unsent(queue, wa_sender, dedup)
+        except Exception as e:
+            log.error(f"[MAIN] Error en retry_unsent: {e}", exc_info=True)
 
         ciclo_alertas = 0
         for item in items_to_process:
-            enviadas = process_region(
-                item, config, classifier, dedup,
-                formatter, router, queue, sh_sender, wa_sender, fetcher,
-                offset=offsets[item]
-            )
+            try:
+                enviadas = process_region(
+                    item, config, classifier, dedup,
+                    formatter, router, queue, sh_sender, wa_sender, fetcher,
+                    offset=offsets[item]
+                )
+            except Exception as e:
+                # Un fallo en un ítem (ej. BD caída, feed roto) no debe tumbar
+                # todo el proceso — se loguea y se sigue con el resto del ciclo.
+                log.error(f"[MAIN] Error procesando '{item}': {e}", exc_info=True)
+                enviadas = 0
             ciclo_alertas += enviadas
             offsets[item] += limit   # avanzar al siguiente bloque
 

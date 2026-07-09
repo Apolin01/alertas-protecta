@@ -17,6 +17,12 @@ REM Obtener la ubicación del script
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
+REM Cerrar instancias previas del bridge si existieran
+echo Cerrando instancias previas en puerto 3000...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3001 " ^| findstr "LISTENING"') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+
 REM Iniciar el bridge en una ventana nueva
 echo [1/2] Iniciando WhatsApp Bridge...
 start "WhatsApp Bridge" cmd /k "cd whatsapp_bridge && node server.js"

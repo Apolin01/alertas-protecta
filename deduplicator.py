@@ -25,6 +25,7 @@ import unicodedata
 import psycopg2
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
+from functools import wraps
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 log = logging.getLogger(__name__)
@@ -283,6 +284,30 @@ def _get_conn():
 
     return psycopg2.connect(url)
 
+
+def _reconnect_and_retry(method):
+    """
+    Reintenta el método UNA vez si la conexión a Postgres se cae a mitad de
+    la ejecución (ej. servidor cierra conexiones idle — común en Neon/Supabase).
+    _cursor() ya reconecta al INICIO de cada método, pero un método largo hace
+    varias queries seguidas con el mismo cursor; si la conexión muere entre
+    medio, sin esto la excepción se propaga y tumba el proceso (run_forever).
+    """
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            log.warning(f"[Dedup] Conexión perdida en {method.__name__} ({e}) — reconectando y reintentando...")
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            self.conn = _get_conn()
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class Deduplicator:
     def __init__(self):
         self.conn = _get_conn()
@@ -398,6 +423,7 @@ class Deduplicator:
     # ─────────────────────────────────────────────
     # DEDUP DE POSTS (Nivel 1 — por URL)
     # ─────────────────────────────────────────────
+    @_reconnect_and_retry
     def already_processed(self, post: dict) -> bool:
         """¿Esta URL ya fue procesada?"""
         h = self._url_hash(post)
@@ -405,6 +431,7 @@ class Deduplicator:
         cur.execute("SELECT 1 FROM processed WHERE hash = %s", (h,))
         return cur.fetchone() is not None
 
+    @_reconnect_and_retry
     def mark_processed(self, post: dict):
         """Marca una URL como procesada."""
         h = self._url_hash(post)
@@ -415,6 +442,10 @@ class Deduplicator:
                 (h, post.get("url", ""), datetime.now().isoformat())
             )
             self.conn.commit()
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            # Conexión caída: no intentar rollback (fallaría también), dejar
+            # que el decorador reconecte y reintente el método completo.
+            raise
         except Exception as e:
             self.conn.rollback()
             log.error(f"Error en dedup BD: {e}")
@@ -422,6 +453,7 @@ class Deduplicator:
     # ─────────────────────────────────────────────
     # DEDUP DE ALERTAS (Nivel 2,3,4 — por contenido)
     # ─────────────────────────────────────────────
+    @_reconnect_and_retry
     def is_duplicate_alert(self, alert: dict, window_hours: int = DEDUP_WINDOW_HOURS) -> bool:
         """
         Retorna True si ya se envió una alerta similar en las últimas N horas.
@@ -641,6 +673,7 @@ class Deduplicator:
 
         return False
 
+    @_reconnect_and_retry
     def mark_alert_sent(self, alert: dict):
         """
         Registra una alerta como enviada para futuras dedups.
@@ -726,6 +759,7 @@ class Deduplicator:
     # ─────────────────────────────────────────────
     # LIMPIEZA
     # ─────────────────────────────────────────────
+    @_reconnect_and_retry
     def _cleanup_old(self):
         """Limpia registros antiguos para evitar tabla gigante."""
         cutoff = (datetime.now() - timedelta(days=7)).isoformat()

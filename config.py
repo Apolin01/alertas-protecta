@@ -356,7 +356,7 @@ class Config:
     GOOGLE_CREDENTIALS_FILE = "credentials.json"
     # ⚠️ El SPREADSHEET_ID estaba hardcodeado como default. Pasarlo via .env.
     SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "")
-    SHEET_NAME = "Tabla_Informacion"       # pestaña visible en imagen 1
+    SHEET_NAME = "Informacion"
     OPERADOR_AUTOMATICO = "Sistema Automático"
     EMAIL_SISTEMA = "protecta.dev@gmail.com"
 

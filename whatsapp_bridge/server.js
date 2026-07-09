@@ -27,7 +27,7 @@ console.error = (...args) => {
 // ─────────────────────────────────────────────
 // CONFIGURACION
 // ─────────────────────────────────────────────
-const PORT       = process.env.PORT || 3000;
+const PORT       = process.env.PORT || 3001;
 const AUTH_TOKEN = process.env.BRIDGE_TOKEN || "protecta2026";
 const DATA_PATH  = process.env.WA_DATA_PATH || "/app";
 const AUTH_DIR   = path.join(DATA_PATH, ".wwebjs_auth", "baileys_auth");
@@ -418,7 +418,16 @@ process.on("SIGTERM", () => {
     setTimeout(() => process.exit(0), 1500);
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`\n🚀 Bridge HTTP en http://localhost:${PORT}`);
     console.log(`   Token: ${AUTH_TOKEN}\n`);
+});
+
+server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+        console.error(`[Error] Puerto ${PORT} ya está en uso. Ya hay una instancia corriendo. Saliendo.`);
+        process.exit(1);
+    } else {
+        throw err;
+    }
 });

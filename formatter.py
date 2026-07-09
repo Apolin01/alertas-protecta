@@ -26,19 +26,24 @@ SHEET_HEADERS = [
     "Cliente",
     "Rubro",
     "Relevancia",
+    "Asunto",
+    "Coordenadas",
+    "Insertar imagen de la noticia",
     "Link de la noticia",
     "Insertar noticia (Formato tabla de ChatGTP)",
-    "Operador",
-    "Tipo",
-    "Nivel_Alerta",
-    "Region",
-    "Departamento",
+    "fecha",
+    "ID_Departamento",
     "Provincia",
     "Distrito",
     "Categoria",
-    "Subcategoria",
-    "Tags",
-    "Clave_Unica",
+    "Etiquetas",
+    "Id_Noticias",
+    "Bajo",
+    "Medio",
+    "Alto",
+    "Día",
+    "Operador",
+    "Tipo",
 ]
 
 # Caracteres prohibidos en titulo y palabras clave
@@ -255,39 +260,69 @@ class AlertFormatter:
 
     def format_sheets_row(self, alert: dict, post: dict, config=None) -> list:
         """
-        Retorna lista de celdas en el mismo orden que las columnas del Form + extras.
-        Normaliza departamento, provincia y distrito automáticamente.
+        Retorna lista de celdas en el mismo orden que las 23 columnas de Tabla_Informacion.
+        Coincide exactamente con la estructura del Google Form.
         """
-        now_str     = _now_peru("%d/%m/%Y %H:%M:%S")
-        email       = getattr(config, "EMAIL_SISTEMA", "protecta.dev@gmail.com") if config else "protecta.dev@gmail.com"
-        operador    = getattr(config, "OPERADOR_AUTOMATICO", "Sistema Automático") if config else "Sistema Automático"
+        now_dt   = datetime.now(_PERU_TZ)
+        now_str  = now_dt.strftime("%d/%m/%Y %H:%M:%S")
+        email    = getattr(config, "EMAIL_SISTEMA", "protecta.dev@gmail.com") if config else "protecta.dev@gmail.com"
+        operador = getattr(config, "OPERADOR_AUTOMATICO", "Sistema Automático") if config else "Sistema Automático"
 
-        cliente     = alert.get("cliente", "Ninguno (Coyuntura Nacional)")
-        rubro       = alert.get("rubro", "Otros")
-        relevancia  = alert.get("relevancia", "Bajo")
-        link        = post.get("url") or alert.get("source_url", "")
+        cliente    = alert.get("cliente", "Ninguno (Coyuntura Nacional)")
+        rubro      = alert.get("rubro", "Otros")
+        relevancia = alert.get("relevancia", "Bajo")
+        link       = post.get("url") or alert.get("source_url", "")
+        imagen     = post.get("image_url", "")
         noticia_fmt = self.format_noticia_tabla(alert, post, config)
-        tipo        = alert.get("tipo", "Noticia")
+        tipo       = alert.get("tipo", "Noticia")
 
-        nivel        = alert.get("nivel", "INFO")
-        region       = alert.get("region", "")
-        
-        # Normalizar ubicación
         departamento, provincia, distrito = _normalize_ubication(
             alert.get("departamento", ""),
             alert.get("provincia", ""),
             alert.get("distrito", ""),
             config
         )
-        
         categoria    = alert.get("categoria", "")
         subcategoria = alert.get("subcategoria", "")
         tags         = "-".join(alert.get("tags", []))
-        clave        = noticia_fmt[:120]
+
+        # Columnas del SPLIT
+        fecha_split     = now_dt.strftime("%d-%m-%y")
+        cat_split       = categoria.replace(" ", "-").upper() if categoria else ""
+        etiquetas_split = subcategoria.replace(" ", "-").upper() if subcategoria else tags
+        id_noticias     = alert.get("titulo", "") or alert.get("resumen_whatsapp", "")
+
+        # Flags Bajo / Medio / Alto
+        bajo  = 1 if relevancia == "Bajo"  else 0
+        medio = 1 if relevancia == "Medio" else 0
+        alto  = 1 if relevancia == "Alto"  else 0
+
+        # Día en español
+        _DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        dia = _DIAS_ES[now_dt.weekday()]
 
         return [
-            now_str, email, cliente, rubro, relevancia, link,
-            noticia_fmt, operador, tipo, nivel, region,
-            departamento, provincia, distrito, categoria,
-            subcategoria, tags, clave,
+            now_str,        # Marca temporal
+            email,          # Dirección de correo electrónico
+            cliente,        # Cliente
+            rubro,          # Rubro
+            relevancia,     # Relevancia
+            "",             # Asunto (vacío en entradas automáticas)
+            "",             # Coordenadas
+            imagen,         # Insertar imagen de la noticia
+            link,           # Link de la noticia
+            noticia_fmt,    # Insertar noticia (Formato tabla de ChatGTP)
+            fecha_split,    # fecha
+            departamento,   # ID_Departamento
+            provincia,      # Provincia
+            distrito,       # Distrito
+            cat_split,      # Categoria
+            etiquetas_split,# Etiquetas
+            id_noticias,    # Id_Noticias
+            bajo,           # Bajo
+            medio,          # Medio
+            alto,           # Alto
+            dia,            # Día
+            operador,       # Operador
+            tipo,           # Tipo
         ]

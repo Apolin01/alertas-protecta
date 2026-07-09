@@ -68,8 +68,12 @@ class SheetsSender:
             return False
 
         try:
-            sheet.append_row(row, value_input_option="USER_ENTERED")
-            log.info(f"Sheets OK → {row[0]} | {row[2]} | {row[3]} | {row[4]}")
+            # Busca la última fila con dato en columna A para evitar que
+            # fórmulas en otras columnas confundan a append_row y sobreescriba.
+            col_a = sheet.col_values(1)
+            next_row = len(col_a) + 1
+            sheet.insert_rows([row], row=next_row, value_input_option="USER_ENTERED")
+            log.info(f"Sheets OK (fila {next_row}) → {row[0]} | {row[2]} | {row[3]} | {row[4]}")
             return True
         except Exception as e:
             log.error(f"Error insertando en Sheets: {e}")
