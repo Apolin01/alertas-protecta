@@ -339,6 +339,7 @@ class Config:
 
     POSTS_PER_PAGE = 8
     WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "bridge")
+    ENABLE_IMAGE_FALLBACK = os.getenv("ENABLE_IMAGE_FALLBACK", "true").lower() == "true"
 
 
     # ─────────────────────────────────────────────
@@ -356,7 +357,7 @@ class Config:
     GOOGLE_CREDENTIALS_FILE = "credentials.json"
     # ⚠️ El SPREADSHEET_ID estaba hardcodeado como default. Pasarlo via .env.
     SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "")
-    SHEET_NAME = "Informacion"
+    SHEET_NAME = "Tabla_Informacion"       # pestaña visible en imagen 1
     OPERADOR_AUTOMATICO = "Sistema Automático"
     EMAIL_SISTEMA = "protecta.dev@gmail.com"
 

@@ -31,6 +31,7 @@ if sys.platform == "win32":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 from config import Config
+from whatsapp_image import BRIDGE_BASE64_LIMIT, generate_alert_image_data_uri
 
 # Importar según configuración: RSS o Scraper tradicional
 if Config.USE_RSS_FEED:
@@ -165,8 +166,22 @@ def retry_unsent(queue: AlertQueue, wa_sender: WhatsAppSender, dedup: Deduplicat
     log.info(f"[REINTENTO] {total} alerta(s) pendiente(s) de envios fallidos")
     for group, items in groups.items():
         for item in items:
+            image_url = item.get("image_url", "") or ""
+            if (
+                not image_url and
+                getattr(wa_sender.config, "WHATSAPP_PROVIDER", "bridge") == "bridge" and
+                getattr(wa_sender.config, "ENABLE_IMAGE_FALLBACK", False)
+            ):
+                try:
+                    alert_data = json.loads(item.get("alert_json", "{}") or "{}")
+                except Exception:
+                    alert_data = {}
+                image_url = generate_alert_image_data_uri(alert_data)
+                if image_url:
+                    log.info(f"[REINTENTO] imagen fallback generada para bridge")
+
             with _send_lock:
-                ok = wa_sender.send(group, item["message"], image_url=item.get("image_url", ""))
+                ok = wa_sender.send(group, item["message"], image_url=image_url)
             if ok:
                 queue.mark_sent(item["id"])
                 log.info(f"[REINTENTO] ✓ Enviado a '{group}'")
@@ -198,8 +213,20 @@ def flush_all_pending(queued_ids: list[int], queue: AlertQueue,
 
     for group, pending in groups.items():
         for item in pending:
-            image_url = item.get("image_url", "")
-            
+            image_url = item.get("image_url", "") or ""
+            if (
+                not image_url and
+                getattr(wa_sender.config, "WHATSAPP_PROVIDER", "bridge") == "bridge" and
+                getattr(wa_sender.config, "ENABLE_IMAGE_FALLBACK", False)
+            ):
+                try:
+                    alert_data = json.loads(item.get("alert_json", "{}") or "{}")
+                except Exception:
+                    alert_data = {}
+                image_url = generate_alert_image_data_uri(alert_data)
+                if image_url:
+                    log.info(f"[ENVIO] imagen fallback generada para bridge")
+
             if image_url:
                 log.info(f"[ENVIO] ✓ CON IMAGEN: {image_url[:80]}")
             else:
