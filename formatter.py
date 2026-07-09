@@ -180,33 +180,49 @@ class AlertFormatter:
 
     # ─────────────────────────────────────────────────────────────
     # FORMATO 2 — WHATSAPP
-    # *NIVEL FECHA DEPARTAMENTO PROVINCIA DISTRITO - KEYWORD1 - KEYWORD2 - KEYWORD3*
+    # *NIVEL FECHA DEPARTAMENTO [DISTRITO] - KEYWORD1 - KEYWORD2 - KEYWORD3*
     # Titulo y resumen - FUENTE: url
     #
-    # ESTRUCTURA OBLIGATORIA: SIEMPRE mostrar los 3 niveles (DEPT PROV DIST)
-    # Nunca omitir ninguno. Ejemplos:
-    #   ANCASH HUARAZ AYASH
-    #   ICA PISCO TUPAC AMARU
-    #   CAJAMARCA JAEN JAEN (si distrito = provincia)
-    #   NACIONAL NACIONAL (caso especial)
+    # La provincia ya NO se muestra (queda implícita/redundante), EXCEPTO
+    # Pisco: tiene su propio cliente/grupo de WhatsApp separado del resto de
+    # Ica (ver PROVINCIA_TO_CLIENT en classifier.py), así que mostrar "ICA"
+    # ahí sería engañoso — se usa PISCO como si fuera el nivel principal.
+    #   - Si se identificó un distrito real → DEPARTAMENTO DISTRITO
+    #     Ej: ANCASH AYASH · CAJAMARCA JAEN
+    #   - Si no se mencionó ni provincia ni distrito → solo DEPARTAMENTO
+    #     Ej: ICA (antes salía "ICA ICA ICA")
+    #   - Provincia PISCO → PISCO [DISTRITO]  (nunca "ICA PISCO")
+    #   - Caso nacional → NACIONAL
     # ─────────────────────────────────────────────────────────────
     def format_whatsapp(self, alert: dict, post: dict, config=None) -> str:
         # SIEMPRE usar fecha del servidor (hoy), no fecha de publicación
         fecha = _now_peru("%d-%m-%y")
 
-        dept = alert.get("departamento") or ""
-        prov = alert.get("provincia") or ""
-        dist = alert.get("distrito") or ""
-        
-        # Normalizar ubicación
-        dept, prov, dist = _normalize_ubication(dept, prov, dist, config)
+        dept_raw = alert.get("departamento") or ""
+        prov_raw = alert.get("provincia") or ""
+        dist_raw = alert.get("distrito") or ""
 
-        # Construir ubicación con los 3 niveles SIEMPRE
+        # Normalizar ubicación (rellena/valida prov y dist si hiciera falta)
+        dept, _, dist = _normalize_ubication(dept_raw, prov_raw, dist_raw, config)
+
+        prov_mencionada = prov_raw.strip().upper()
+        dist_mencionado = dist_raw.strip().upper()
+
         if dept == "NACIONAL":
-            ubicacion = "NACIONAL NACIONAL"
+            ubicacion = "NACIONAL"
+        elif prov_mencionada == "PISCO":
+            # Caso especial: Pisco tiene grupo propio, se usa como nivel principal.
+            if dist_mencionado and dist_mencionado != prov_mencionada:
+                ubicacion = f"PISCO {dist}".strip()
+            else:
+                ubicacion = "PISCO"
         else:
-            # SIEMPRE: DEPARTAMENTO PROVINCIA DISTRITO (sin omitir ninguno)
-            ubicacion = f"{dept} {prov} {dist}".strip()
+            # DEPARTAMENTO + DISTRITO solo si el distrito fue realmente
+            # mencionado en la alerta (no un relleno de _normalize_ubication).
+            if dist_mencionado and dist_mencionado != dept:
+                ubicacion = f"{dept} {dist}".strip()
+            else:
+                ubicacion = dept
 
         # Keywords: convertir CamelCase a palabras separadas, unir con " - "
         palabras = alert.get("palabras_clave", [])

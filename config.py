@@ -370,7 +370,6 @@ class Config:
         "Clientes Norte",
         "Antamina",
         "Pisco",
-        "Petrotal",
         "Bechtel / Newmont",
         "Agrícola 3P",
         "Agrícola Chapi",
@@ -451,7 +450,6 @@ class Config:
         "Vanguard":                         "Clientes Sur",
         "Uvica":                            "Clientes Sur",
         "Pisco":                            "Pisco",
-        "Petrotal":                         "Petrotal",
         "Ninguno (Coyuntura Nacional)":     "Coyuntura Nacional",
     }
 
@@ -461,7 +459,6 @@ class Config:
     CLIENTE_TO_RUBRO = {
         "Antamina":                         "Minería",
         "Bechtel / Newmont":                "Minería",
-        "Petrotal":                         "Hidrocarburos",
         "Pisco":                            "Pesca",
         "Ninguno (Coyuntura Nacional)":     "No es un rubro",
     }

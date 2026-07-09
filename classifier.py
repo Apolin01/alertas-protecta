@@ -80,11 +80,46 @@ CITY_TO_DEPT = {
 }
 
 
+# Los 25 departamentos + Callao. Se usa como guarda en las provincias
+# "sensibles" (ver PROVINCIA_MULTI_CLIENTE abajo) para no dejar que una
+# provincia/distrito mal extraído (alucinación de la IA) pise un departamento
+# ya válido. Incidente real: la IA puso departamento="PIURA" pero
+# distrito="PISCO" (error de extracción) → terminaba enrutado al grupo Pisco.
+PERU_DEPARTAMENTOS = {
+    "AMAZONAS", "ANCASH", "APURIMAC", "AREQUIPA", "AYACUCHO", "CAJAMARCA",
+    "CALLAO", "CUSCO", "HUANCAVELICA", "HUANUCO", "ICA", "JUNIN",
+    "LA LIBERTAD", "LAMBAYEQUE", "LIMA", "LORETO", "MADRE DE DIOS",
+    "MOQUEGUA", "PASCO", "PIURA", "PUNO", "SAN MARTIN", "TACNA", "TUMBES",
+    "UCAYALI",
+}
+
+# Provincias que determinan un cliente/grupo propio dentro de su departamento
+# (ver PROVINCIA_TO_CLIENT más abajo: Pisco, Chincha, Nasca, Palpa, Barranca,
+# Supe, Huaura, Huaral, Huarmey). Como enrutan a un grupo específico, un error
+# de extracción aquí es más costoso (manda la alerta al cliente equivocado)
+# que en una ciudad cualquiera — por eso llevan la guarda de PERU_DEPARTAMENTOS
+# en fix_dept_by_city. El resto de ciudades (Chimbote, Trujillo, etc.) NO la
+# llevan: ahí SIEMPRE se confía en la ciudad sobre el departamento, que es el
+# caso que esta función corrige originalmente ("Chimbote" en "La Libertad").
+PROVINCIA_MULTI_CLIENTE_DEPT = {
+    "PISCO": "ICA", "CHINCHA": "ICA", "NASCA": "ICA", "NAZCA": "ICA",
+    "PALPA": "ICA", "ICA": "ICA",
+    "BARRANCA": "LIMA", "SUPE": "LIMA", "HUAURA": "LIMA", "HUARAL": "LIMA",
+    "HUARMEY": "ANCASH",
+}
+
+
 def fix_dept_by_city(alert: dict) -> dict:
     """
     Si distrito/provincia es una ciudad conocida pero el departamento de la IA
     no coincide, se fuerza el departamento correcto. Corrige errores como
     "CHIMBOTE en LA LIBERTAD" → "CHIMBOTE en ANCASH".
+
+    Excepción: si la ciudad es una provincia "multi-cliente" (PISCO, HUARMEY,
+    etc. — ver PROVINCIA_MULTI_CLIENTE_DEPT) Y el departamento actual ya es
+    OTRO departamento peruano reconocido, no se corrige — es más probable que
+    el error esté en provincia/distrito que en departamento, y forzar el
+    cambio causaría un enrutamiento equivocado (ver incidente PIURA→PISCO).
     """
     prov = (alert.get("provincia") or "").upper().strip()
     dist = (alert.get("distrito")  or "").upper().strip()
@@ -94,13 +129,28 @@ def fix_dept_by_city(alert: dict) -> dict:
         if not ciudad:
             continue
         dept_correcto = CITY_TO_DEPT.get(ciudad)
-        if dept_correcto and dept_correcto != dept_actual:
-            log.info(
-                f"Departamento corregido: IA dijo '{dept_actual}' "
-                f"pero ciudad '{ciudad}' → '{dept_correcto}'"
+        if not dept_correcto or dept_correcto == dept_actual:
+            continue
+
+        dept_sensible_esperado = PROVINCIA_MULTI_CLIENTE_DEPT.get(ciudad)
+        if (
+            dept_sensible_esperado
+            and dept_actual in PERU_DEPARTAMENTOS
+            and dept_actual != dept_sensible_esperado
+        ):
+            log.warning(
+                f"Ciudad '{ciudad}' sugiere departamento '{dept_correcto}' pero la IA "
+                f"ya puso '{dept_actual}' (departamento válido) — NO se corrige "
+                f"(posible error de extracción en provincia/distrito, no en departamento)"
             )
-            alert["departamento"] = dept_correcto
-            return alert
+            continue
+
+        log.info(
+            f"Departamento corregido: IA dijo '{dept_actual}' "
+            f"pero ciudad '{ciudad}' → '{dept_correcto}'"
+        )
+        alert["departamento"] = dept_correcto
+        return alert
     return alert
 
 
@@ -113,10 +163,12 @@ DEPT_TO_CLIENT = {
     "HUANUCO":       "Antamina",
     "PASCO":         "Antamina",
     "CAJAMARCA":     "Bechtel / Newmont",
-    "LORETO":        "Petrotal",
-    "UCAYALI":       "Petrotal",
     "LA LIBERTAD":   "Clientes Norte",   # Trujillo, Virú, Pataz → NUNCA Bechtel
     # ICA tiene multiples clientes, ver PROVINCIA_TO_CLIENT
+    # LORETO/UCAYALI (antes "Petrotal") — cliente eliminado a pedido: el grupo
+    # de WhatsApp "Petrotal" no existe/no está conectado (193 envíos fallidos
+    # en logs). Ya no se clasifican noticias de esos departamentos hacia
+    # ningún cliente específico.
 }
 
 
@@ -139,6 +191,13 @@ PROVINCIA_TO_CLIENT = {
     "HUARAL":   "Agrícola Santa Azul",  # ⭐ Fix #7: HUARAL pasaba filtro Lima pero no tenía cliente
     "HUARMEY":  "Agrícola Huarmey",
 }
+
+# Departamento real de cada provincia de PROVINCIA_TO_CLIENT. Reutiliza
+# PROVINCIA_MULTI_CLIENTE_DEPT (definido arriba, junto a fix_dept_by_city) para
+# no duplicar la lista — sirve de guarda: si la IA puso un departamento
+# distinto y válido (ej. "PIURA"), una provincia mal extraída ("PISCO") NO
+# debe reenrutar la alerta al grupo equivocado.
+PROVINCIA_TO_DEPT = PROVINCIA_MULTI_CLIENTE_DEPT
 
 # Términos que indican contenido turístico/recreativo sin impacto operacional.
 # Se buscan en subcategoria y palabras_clave tras la clasificación IA.
@@ -210,7 +269,15 @@ def fix_client_by_provincia(alert: dict) -> dict:
     Corrige el cliente cuando la provincia/distrito identifica una zona
     con cliente especifico (mas granular que el mapa por departamento).
     Ej.: provincia CHINCHA → "Clientes Sur" aunque la IA haya dicho "Pisco".
+
+    Guarda de seguridad: si el departamento ya es uno reconocido (ver
+    PERU_DEPARTAMENTOS) y NO es el departamento real de esa provincia
+    (PROVINCIA_TO_DEPT), se ignora la coincidencia — es más probable que la
+    IA haya extraído mal la provincia/distrito que el departamento. Sin esto,
+    una alerta de PIURA con distrito mal extraído como "PISCO" terminaba
+    enrutada al grupo de Pisco (Ica) en vez de descartarse/ir a Nacional.
     """
+    departamento = (alert.get("departamento") or "").upper().strip()
     provincia = (alert.get("provincia") or "").upper().strip()
     distrito  = (alert.get("distrito")  or "").upper().strip()
 
@@ -219,6 +286,18 @@ def fix_client_by_provincia(alert: dict) -> dict:
             continue
         cliente_correcto = PROVINCIA_TO_CLIENT.get(zona)
         if cliente_correcto:
+            dept_esperado = PROVINCIA_TO_DEPT.get(zona)
+            if (
+                dept_esperado
+                and departamento in PERU_DEPARTAMENTOS
+                and departamento != dept_esperado
+            ):
+                log.warning(
+                    f"Provincia '{zona}' → cliente '{cliente_correcto}' IGNORADO: "
+                    f"departamento IA='{departamento}' no coincide con el esperado "
+                    f"'{dept_esperado}' (posible error de extracción de la IA)"
+                )
+                continue
             cliente_actual = alert.get("cliente", "")
             if cliente_actual != cliente_correcto:
                 log.info(
@@ -407,9 +486,15 @@ class AlertClassifier:
             # ⭐ Bloqueo Arequipa — DEBE ser ultimo para que nada lo sobrescriba
             alert = fix_arequipa_block(alert)
 
-            # Validacion final: si provincia es HUARMEY, asegurar ANCASH y cliente correcto
+            # Validacion final: si provincia es HUARMEY, asegurar ANCASH y cliente correcto.
+            # Mismo guard que fix_client_by_provincia: si el departamento ya es OTRO
+            # departamento peruano reconocido, no lo pisamos (evita el mismo bug de
+            # enrutamiento que PIURA→PISCO, aquí con una provincia mal extraída "HUARMEY").
+            dept_check = (alert.get("departamento") or "").upper().strip()
             prov_check = (alert.get("provincia") or "").upper().strip()
-            if prov_check == "HUARMEY":
+            if prov_check == "HUARMEY" and (
+                not dept_check or dept_check not in PERU_DEPARTAMENTOS or dept_check == "ANCASH"
+            ):
                 alert["departamento"] = "ANCASH"
                 alert["cliente"] = "Agrícola Huarmey"  # ⭐ Forma canónica de CLIENTES_VALIDOS
 

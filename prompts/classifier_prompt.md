@@ -41,7 +41,7 @@ Preferentes (usar si aplica): DETENCION, HOMICIDIO, SEGURIDAD, AGRO, AGRICULTORE
   Mineria: ANTAMINA, YANACOCHA, NEWMONT, BECHTEL, CONGA.
   Agro Sur (solo ICA, NUNCA Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY-FARMS, SUN-FRUITS, VANGUARD, RVR, UVICA, CAMPOS-DEL-SUR, DON-LUIS, DON-RICARDO.
   Agro Norte (La Libertad/costa): CASA-GRANDE, DANPER, MISSION, HORTIFRUT, GREEN-PERU, HASS, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA, LAREDO, ADAS, CAMPO-ANDINO.
-  Otros: PETROTAL, AGRICOLA-SANTA-AZUL.
+  Otros: AGRICOLA-SANTA-AZUL.
 - Abreviaciones si aparecen literalmente en el texto: CODEHICA, CNDDHH, SEDYS, FETSA, CAMPOSOL, SITECASA-CAMPOSOL, CNUL, CPUL-ICA, STCCI, SUTEP, CGTP, TUAGRAP.
 
 TITULO:
@@ -200,7 +200,6 @@ CLIENTES VALIDOS (usar EXACTAMENTE estos nombres, CON tildes donde corresponde):
 "Ninguno (Coyuntura Nacional)" — politica nacional gobierno central.
 "Antamina" — ANCASH, HUANUCO, PASCO.
 "Bechtel / Newmont" — CAJAMARCA (todas sus provincias). Empresas: Minera Yanacocha, Newmont, Conga, Bechtel.
-"Petrotal" — LORETO, UCAYALI.
 "Pisco" — ICA provincia Pisco, costera pesquera.
 "Agrícola Santa Azul" — LIMA: BARRANCA, SUPE, HUAURA, HUARAL.
 "Agrícola Huarmey" — ANCASH provincia HUARMEY.
