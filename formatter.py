@@ -19,6 +19,34 @@ NIVEL_EMOJI = {
     "INFO": "INFO 🟢",
 }
 
+_NIVEL_WORDS = ("CRIT", "ALRT", "INFO")
+
+
+def _strip_echoed_header(text: str) -> str:
+    """
+    A veces la IA repite el header completo (NIVEL FECHA UBICACION - PALABRAS)
+    al inicio de resumen_whatsapp en vez de solo el resumen (confundida por los
+    EJEMPLOS del prompt, que muestran el mensaje final completo). Sin esto el
+    mensaje sale con el header duplicado. Se detecta por el patrón NIVEL +
+    fecha DD-MM-AA cerca del inicio, y se recorta hasta donde empieza la
+    prosa real (primera palabra que no es MAYUSCULA/fecha/puntuación).
+    """
+    if not text:
+        return text
+    cabeza = text.lstrip("[*").strip()
+    if not any(cabeza.startswith(w) for w in _NIVEL_WORDS):
+        return text
+    m = re.search(r'\d{2}-\d{2}-\d{2}', text)
+    if not m or m.start() > 30:
+        return text
+    palabras = text[m.end():].split(" ")
+    for i, w in enumerate(palabras):
+        core = w.strip("[]*-.,")
+        if core and any(c.islower() for c in core):
+            resultado = " ".join(palabras[i:]).strip(" -")
+            return resultado if resultado else text
+    return text
+
 # Columnas del Google Form / Sheets
 SHEET_HEADERS = [
     "Marca temporal",
@@ -135,16 +163,23 @@ def _normalize_ubication(dept: str, prov: str, dist: str, config=None) -> tuple:
 class AlertFormatter:
 
     def shorten_url(self, url: str) -> str:
-        """Acorta una URL usando TinyURL."""
+        """
+        Acorta una URL usando da.gd — a diferencia de TinyURL (API anónima),
+        da.gd redirige directo (302) al destino sin página de vista previa.
+        (is.gd, la alternativa obvia, se probó y falla ~50% de las veces con
+        "database insert failed" — da.gd fue 100% confiable en las pruebas).
+        """
         if not url or not url.startswith("http"):
             return url
         try:
             resp = requests.get(
-                f"https://tinyurl.com/api-create.php?url={url}",
+                "https://da.gd/shorten",
+                params={"url": url},
                 timeout=5
             )
-            if resp.status_code == 200 and resp.text.startswith("http"):
-                return resp.text.strip()
+            short = resp.text.strip()
+            if resp.status_code == 200 and short.startswith("http"):
+                return short
         except Exception:
             pass
         return url
@@ -235,6 +270,15 @@ class AlertFormatter:
         # USAR SOLO resumen (no concatenar titulo + resumen para evitar repetición)
         # Si no hay resumen, usar titulo como fallback
         cuerpo = resumen if resumen else titulo
+
+        # A veces la IA repite el header completo dentro del resumen (ver
+        # _strip_echoed_header) — se recorta antes de usarlo.
+        cuerpo = _strip_echoed_header(cuerpo)
+
+        # A veces la IA copia una cita "- FUENTE: X" del texto original dentro
+        # del resumen — se quita para no duplicarla con la que agrega el sistema
+        # abajo (ej. "...proteger sus fuentes de agua. - FUENTE: Grufides").
+        cuerpo = re.sub(r'\s*-?\s*fuente\s*:\s*.*$', '', cuerpo, flags=re.IGNORECASE).strip()
 
         fuente_raw = post.get("url") or alert.get("source_url", "")
         fuente     = self.shorten_url(fuente_raw) if fuente_raw else ""

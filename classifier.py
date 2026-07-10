@@ -93,19 +93,25 @@ PERU_DEPARTAMENTOS = {
     "UCAYALI",
 }
 
-# Provincias que determinan un cliente/grupo propio dentro de su departamento
-# (ver PROVINCIA_TO_CLIENT más abajo: Pisco, Chincha, Nasca, Palpa, Barranca,
-# Supe, Huaura, Huaral, Huarmey). Como enrutan a un grupo específico, un error
-# de extracción aquí es más costoso (manda la alerta al cliente equivocado)
-# que en una ciudad cualquiera — por eso llevan la guarda de PERU_DEPARTAMENTOS
-# en fix_dept_by_city. El resto de ciudades (Chimbote, Trujillo, etc.) NO la
-# llevan: ahí SIEMPRE se confía en la ciudad sobre el departamento, que es el
-# caso que esta función corrige originalmente ("Chimbote" en "La Libertad").
+# Nombres de provincia/distrito que llevan la guarda de PERU_DEPARTAMENTOS en
+# fix_dept_by_city (no se corrige el departamento si el actual ya es OTRO
+# departamento peruano válido). Dos motivos para estar aquí:
+#   1) Determinan un cliente/grupo propio (ver PROVINCIA_TO_CLIENT más abajo:
+#      Pisco, Chincha, Nasca, Palpa, Barranca, Supe, Huaura, Huaral, Huarmey)
+#      — un error de extracción aquí manda la alerta al cliente equivocado.
+#   2) El nombre es AMBIGUO entre departamentos (ej. "SAN MARCOS" es distrito
+#      de ANCASH/Huari Y provincia de CAJAMARCA — incidente real: alerta de
+#      San Marcos-Cajamarca terminó enrutada a Antamina en vez de
+#      Bechtel/Newmont).
+# El resto de ciudades (Chimbote, Trujillo, etc.) NO llevan esta guarda: ahí
+# SIEMPRE se confía en la ciudad sobre el departamento, que es el caso que
+# esta función corrige originalmente ("Chimbote" puesto en "La Libertad").
 PROVINCIA_MULTI_CLIENTE_DEPT = {
     "PISCO": "ICA", "CHINCHA": "ICA", "NASCA": "ICA", "NAZCA": "ICA",
     "PALPA": "ICA", "ICA": "ICA",
     "BARRANCA": "LIMA", "SUPE": "LIMA", "HUAURA": "LIMA", "HUARAL": "LIMA",
     "HUARMEY": "ANCASH",
+    "SAN MARCOS": "ANCASH",  # ambiguo: tambien es provincia de CAJAMARCA
 }
 
 
