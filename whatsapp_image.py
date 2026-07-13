@@ -64,6 +64,14 @@ BRIDGE_BASE64_LIMIT = 400_000
 DATA_URI_PREFIX = "data:image/jpeg;base64,"
 TARGET_IMAGE_BYTES = int((BRIDGE_BASE64_LIMIT - len(DATA_URI_PREFIX)) * 3 / 4)
 
+# Paleta por nivel: mantiene identidad visual según `nivel` (CRIT/ALRT/INFO)
+LEVEL_STYLES = {
+    # Rojo / Amarillo / Verde (fácil asociación por nivel)
+    "CRIT": {"bg": (200, 30, 30),  "text": (255, 245, 245)},
+    "ALRT": {"bg": (235, 185, 30), "text": (40, 40, 40)},
+    "INFO": {"bg": (40, 160, 60),  "text": (245, 255, 245)},
+}
+
 
 def normalize_text(text: str) -> str:
     if not text:
@@ -83,6 +91,11 @@ def load_font(size: int):
 
 
 def choose_style(alert: Dict) -> Dict:
+    # Priorizar estilo por nivel si está presente
+    nivel = (alert.get("nivel") or "").upper().strip()
+    if nivel and nivel in LEVEL_STYLES:
+        return LEVEL_STYLES[nivel]
+
     search_parts = []
     if alert.get("categoria"):
         search_parts.append(alert["categoria"])

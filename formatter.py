@@ -162,26 +162,34 @@ def _normalize_ubication(dept: str, prov: str, dist: str, config=None) -> tuple:
 
 class AlertFormatter:
 
+    # Servicios de acortado, en orden de preferencia. clck.ru (Yandex) probo
+    # ser el mas confiable (5/5 en pruebas, incluso con URLs largas de
+    # Facebook) — redirige en 2 saltos automaticos (clck.ru -> sba.yandex.ru
+    # -> destino) sin ninguna pagina visible al usuario. da.gd/is.gd quedan
+    # como respaldo por si clck.ru falla (da.gd nos bloqueo por volumen antes,
+    # is.gd fallo intermitentemente) — un solo servicio caido no debe dejar
+    # todos los links sin acortar.
+    _SHORTENERS = (
+        ("clck.ru", "https://clck.ru/--", "url"),
+        ("da.gd", "https://da.gd/shorten", "url"),
+        ("is.gd", "https://is.gd/create.php", "url"),
+    )
+
     def shorten_url(self, url: str) -> str:
-        """
-        Acorta una URL usando da.gd — a diferencia de TinyURL (API anónima),
-        da.gd redirige directo (302) al destino sin página de vista previa.
-        (is.gd, la alternativa obvia, se probó y falla ~50% de las veces con
-        "database insert failed" — da.gd fue 100% confiable en las pruebas).
-        """
+        """Acorta una URL probando varios servicios con fallback entre ellos."""
         if not url or not url.startswith("http"):
             return url
-        try:
-            resp = requests.get(
-                "https://da.gd/shorten",
-                params={"url": url},
-                timeout=5
-            )
-            short = resp.text.strip()
-            if resp.status_code == 200 and short.startswith("http"):
-                return short
-        except Exception:
-            pass
+        for name, endpoint, param in self._SHORTENERS:
+            try:
+                params = {param: url}
+                if name == "is.gd":
+                    params["format"] = "simple"
+                resp = requests.get(endpoint, params=params, timeout=5)
+                short = resp.text.strip()
+                if resp.status_code == 200 and short.startswith("http"):
+                    return short
+            except Exception:
+                continue
         return url
 
     # ─────────────────────────────────────────────────────────────
