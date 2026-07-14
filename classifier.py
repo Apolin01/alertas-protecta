@@ -5,6 +5,7 @@ Soporta: Groq, Gemini, Claude, OpenRouter.
 
 import json
 import logging
+import re
 import time
 import unicodedata
 from pathlib import Path
@@ -230,6 +231,26 @@ AVISO_MUNICIPAL_TERMS = {
     "FERIA", "TALLER", "CONCURSO", "CAPACITACION", "JORNADA", "INFORMATIVA",
 }
 
+# Términos que indican promoción personal de candidatura LOCAL/REGIONAL
+# (autopromoción de campaña, discursos, presentaciones). Red de seguridad
+# porque el prompt (REGLA 10) no siempre lo filtra de forma consistente —
+# se vio en logs alertas de candidatos a alcaldía enviadas como INFO pese a
+# la regla. NO se aplica si departamento="NACIONAL": ahí manda REGLA 0
+# (cobertura de elecciones generales/presidenciales SIEMPRE es INFO minimo).
+CANDIDATURA_TERMS = {
+    "CANDIDATURA", "CANDIDATURAS", "CANDIDATO", "CANDIDATOS",
+    "CANDIDATA", "CANDIDATAS", "PRECANDIDATO", "PRECANDIDATA",
+    "PRECANDIDATURA", "POSTULANTE", "POSTULANTES",
+}
+
+# Términos que indican promociones/sorteos/campañas comerciales — publicidad,
+# no noticia. Ej.: "Hidrandina lanza campaña para premiar a clientes puntuales
+# con electrodomésticos y canastas de víveres".
+PROMOCIONAL_TERMS = {
+    "SORTEO", "SORTEOS", "RIFA", "RIFAS", "PREMIACION", "PREMIACIONES",
+    "CANJE", "CANJEA", "PARTICIPA-Y-GANA", "PROMOCION", "PROMOCIONES",
+}
+
 # Términos que indican trafico/usurpación de terrenos — riesgo social para zonas
 # agricolas/operativas cercanas, aunque la noticia se enfoque en un funcionario o
 # excandidato. Se buscan en titulo + resumen (sin tildes). Si la IA clasificó como
@@ -242,6 +263,49 @@ TRAFICO_TERRENOS_TERMS = (
 
 def _strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+
+def fix_ica_provincia_by_text(alert: dict, texto: str, config) -> dict:
+    """
+    La IA a veces asigna provincia="PISCO" solo porque la fuente es una pagina
+    de Pisco (ej. prensadigitalpiscoperu), aunque el texto original mencione un
+    distrito de OTRA provincia de Ica. Incidente real: noticia de un suicidio
+    en Parcona (distrito de la provincia ICA, NO Pisco) enrutada al grupo Pisco
+    porque la IA puso provincia=PISCO y distrito=PISCO por defecto.
+
+    Busca en el texto original un distrito conocido de las otras provincias de
+    Ica (Ica, Chincha, Nazca, Palpa) que no pertenezca tambien a Pisco, y si lo
+    encuentra, corrige provincia/distrito/cliente segun ese distrito real.
+    """
+    departamento = (alert.get("departamento") or "").upper().strip()
+    provincia = (alert.get("provincia") or "").upper().strip()
+    if departamento != "ICA" or provincia != "PISCO" or not texto:
+        return alert
+
+    ica_provincias = getattr(config, "DEPT_PROV_DIST", {}).get("ICA", {})
+    pisco_distritos = set(ica_provincias.get("PISCO", []))
+    texto_norm = _strip_accents(texto.upper())
+
+    for otra_provincia, distritos in ica_provincias.items():
+        if otra_provincia == "PISCO":
+            continue
+        for distrito in distritos:
+            # Evitar nombres cortos/ambiguos (ej. "TATE") que puedan dar falsos positivos
+            if len(distrito) < 5 or distrito in pisco_distritos:
+                continue
+            distrito_norm = _strip_accents(distrito)
+            if re.search(rf'\b{re.escape(distrito_norm)}\b', texto_norm):
+                log.warning(
+                    f"Provincia corregida por texto: IA dijo 'PISCO' pero el texto "
+                    f"menciona '{distrito}' (provincia {otra_provincia}) → corrigiendo"
+                )
+                alert["provincia"] = otra_provincia
+                alert["distrito"] = distrito
+                cliente_correcto = PROVINCIA_TO_CLIENT.get(otra_provincia)
+                if cliente_correcto:
+                    alert["cliente"] = cliente_correcto
+                return alert
+    return alert
 
 
 def fix_arequipa_block(alert: dict) -> dict:
@@ -468,6 +532,14 @@ class AlertClassifier:
                     kws.append("INFORMACION")
                 alert["palabras_clave"] = kws[:3]
 
+            # Validar nivel — la IA a veces devuelve basura aca (ej. confundio el
+            # campo y puso el mismo texto que "cliente"). Sin esto, un nivel
+            # invalido pasa silencioso hasta el formateo del WhatsApp, donde
+            # NIVEL_EMOJI no lo encuentra y deja el emoji/nivel vacio en el header.
+            if alert.get("nivel") not in ("CRIT", "ALRT", "INFO", "IGNORAR"):
+                log.warning(f"Nivel invalido '{alert.get('nivel')}' → INFO")
+                alert["nivel"] = "INFO"
+
             # Validar cliente
             if alert.get("cliente") not in self.config.CLIENTES_VALIDOS:
                 log.warning(f"Cliente invalido '{alert.get('cliente')}' → Ninguno")
@@ -488,6 +560,9 @@ class AlertClassifier:
             alert = fix_client_by_dept(alert)
             # Correccion fina por provincia/distrito (mas granular que dept)
             alert = fix_client_by_provincia(alert)
+            # Correccion por sesgo de pagina fuente: IA dijo PISCO pero el texto
+            # menciona un distrito de otra provincia de Ica (ver caso Parcona)
+            alert = fix_ica_provincia_by_text(alert, text, self.config)
 
             # ⭐ Bloqueo Arequipa — DEBE ser ultimo para que nada lo sobrescriba
             alert = fix_arequipa_block(alert)
@@ -515,6 +590,15 @@ class AlertClassifier:
                 )
                 alert["nivel"] = "IGNORAR"
 
+            # Filtro duro: promociones/sorteos/campañas comerciales → siempre IGNORAR
+            # (publicidad, no noticia — ej. "Hidrandina sortea electrodomésticos").
+            if any(t in subcateg for t in PROMOCIONAL_TERMS) or any(t in kws_upper for t in PROMOCIONAL_TERMS):
+                log.info(
+                    f"Filtro promocional: subcategoria='{alert.get('subcategoria')}' "
+                    f"kws={alert.get('palabras_clave')} → IGNORAR"
+                )
+                alert["nivel"] = "IGNORAR"
+
             # Filtro duro: convocatorias/avisos de empleo (nivel INFO) → IGNORAR
             # No aplica a CRIT/ALRT para no bloquear accidentes laborales o huelgas.
             if alert.get("nivel") == "INFO" and (
@@ -534,6 +618,23 @@ class AlertClassifier:
             ):
                 log.info(
                     f"Filtro aviso municipal: subcategoria='{alert.get('subcategoria')}' "
+                    f"kws={alert.get('palabras_clave')} → IGNORAR"
+                )
+                alert["nivel"] = "IGNORAR"
+
+            # Filtro duro: promoción personal de candidatura LOCAL/REGIONAL (nivel INFO)
+            # → IGNORAR. Red de seguridad porque el prompt (REGLA 10) no siempre lo
+            # filtra de forma consistente (visto en logs: candidatos a alcaldía
+            # enviados como INFO pese a la regla). NO aplica si departamento=NACIONAL
+            # (cobertura de elecciones generales/presidenciales, protegida por REGLA 0).
+            departamento_check = (alert.get("departamento") or "").upper().strip()
+            if (
+                alert.get("nivel") == "INFO"
+                and departamento_check != "NACIONAL"
+                and (any(t in subcateg for t in CANDIDATURA_TERMS) or any(t in kws_upper for t in CANDIDATURA_TERMS))
+            ):
+                log.info(
+                    f"Filtro candidatura local: subcategoria='{alert.get('subcategoria')}' "
                     f"kws={alert.get('palabras_clave')} → IGNORAR"
                 )
                 alert["nivel"] = "IGNORAR"

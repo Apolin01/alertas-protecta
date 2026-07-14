@@ -214,16 +214,27 @@ llamativo suene):
   escandalos personales, faltas administrativas).
 
   NIVEL SEGUN EL DELITO (no todo delito de la lista es automaticamente CRIT):
-  - HOMICIDIO → SIEMPRE CRIT. Esto incluye tanto el homicidio en si como la
-    DETENCION/CAPTURA de alguien POR un homicidio (ej. "Detienen a sujeto por
-    homicidio ocurrido la semana pasada" → ALRT, no CRIT/INFO — el delito de fondo
-    no sigue siendo homicidio).
+  - HOMICIDIO → CRIT SOLO cuando la noticia es sobre el HECHO MISMO ocurriendo o
+    recien ocurrido: "mataron a X", "asesinan a X", "hallan cuerpo con signos de
+    violencia", "sicarios acribillan a X". Eso es lo unico que cuenta como
+    HOMICIDIO para nivel CRIT.
+    ⚠️ CUALQUIER SEGUIMIENTO POSTERIOR AL HECHO — detencion/captura de sospechosos,
+    proceso judicial, audiencia, prision preventiva, sentencia, juicio — NO es
+    CRIT. Baja a INFO (es noticia de seguimiento/justicia, no una alerta
+    operacional urgente sobre algo que esta pasando ahora).
+    EJEMPLO: "Dictan prision preventiva contra conductor implicado en accidente
+    donde murieron 7 personas" → INFO, NO CRIT (es un fallo judicial sobre un
+    hecho ya pasado, no un homicidio ocurriendo).
+    EJEMPLO: "Detienen a sujeto por homicidio ocurrido la semana pasada" → INFO,
+    NO CRIT (es la captura de un sospechoso, no el homicidio en si).
   - Muerte por ACCIDENTE (transito, laboral, natural — NO un delito deliberado) →
     ALRT, no CRIT. Ejemplo: "Motociclista fallece tras choque con camion" → ALRT.
   - Los otros 11 delitos de la lista (EXTORSION, HURTO, ROBO, CONTRABANDO,
-    RECEPTACION, TIAF, TID, USURPACION, MINERIA ILEGAL, ESTAFA, SECUESTRO):
-    nivel depende de gravedad/impacto — usar CRIT si hay violencia armada, victimas,
-    o afecta directamente a un cliente; ALRT para el resto (detenciones, denuncias,
+    RECEPTACION, TIAF, TID, USURPACION, MINERIA ILEGAL, ESTAFA, SECUESTRO): mismo
+    principio — el HECHO ocurriendo es lo que determina CRIT/ALRT segun gravedad;
+    el seguimiento judicial posterior (sentencias, procesos, audiencias) → INFO.
+    Usa CRIT en el hecho si hay violencia armada, victimas, o afecta directamente
+    a un cliente; ALRT para el resto (detenciones en el momento, denuncias,
     operativos sin las agravantes anteriores).
 
 NIVELES:
@@ -245,6 +256,8 @@ NIVELES:
     - Emprendimiento: perfiles de negocios/emprendedores locales sin relacion a un cliente.
     - Agradecimientos o reconocimientos a la comunidad ("Agradecimiento a los vecinos de Las Lomas de Huacachina por su recepción").
     - Escandalos o infracciones menores sin delito de la REGLA 10 (ej. "Suboficial de la Policia fue vista conduciendo una moto con una menor sin casco").
+    - Promociones/sorteos/campañas comerciales — es publicidad, no noticia (ej. "Hidrandina sortea electrodomésticos entre clientes puntuales").
+    - Contenido de "interés humano" / historias virales SIN relevancia operacional ni conflicto: rescates de animales, actos de bondad, anécdotas curiosas, videos virales sin impacto en la zona de operaciones (ej. "Conductor salva a una iguana en la carretera").
 
 CLIENTES VALIDOS (usar EXACTAMENTE estos nombres, CON tildes donde corresponde):
 "Ninguno (Coyuntura Nacional)" — politica nacional gobierno central.

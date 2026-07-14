@@ -350,6 +350,13 @@ class Config:
     BRIDGE_TOKEN = os.getenv("BRIDGE_TOKEN", "")
 
     # ─────────────────────────────────────────────
+    # ACORTADOR DE LINKS PROPIO (Cloudflare Worker) — ver cloudflare-shortener/
+    # Si no esta configurado, formatter.py cae a clck.ru/da.gd/is.gd.
+    # ─────────────────────────────────────────────
+    SHORTENER_URL   = os.getenv("SHORTENER_URL", "")
+    SHORTENER_TOKEN = os.getenv("SHORTENER_TOKEN", "")
+
+    # ─────────────────────────────────────────────
     # GOOGLE SHEETS — mismo Sheets del Google Form
     # ─────────────────────────────────────────────
     # Poner en True cuando tengas el credentials.json de Google

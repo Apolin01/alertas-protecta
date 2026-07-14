@@ -5,8 +5,11 @@ formatter.py — Genera los dos formatos de salida.
 """
 
 import re
+import logging
 import requests
 from datetime import datetime, timezone, timedelta
+
+log = logging.getLogger(__name__)
 
 _PERU_TZ = timezone(timedelta(hours=-5))
 
@@ -175,10 +178,36 @@ class AlertFormatter:
         ("is.gd", "https://is.gd/create.php", "url"),
     )
 
-    def shorten_url(self, url: str) -> str:
-        """Acorta una URL probando varios servicios con fallback entre ellos."""
+    def shorten_url(self, url: str, config=None) -> str:
+        """
+        Acorta una URL. Si hay un acortador propio configurado (Cloudflare
+        Worker, ver cloudflare-shortener/) lo usa primero — es el mas
+        confiable porque corre en infraestructura propia, no un servicio
+        gratuito ajeno que puede caerse/bloquear. Si no esta configurado o
+        falla, cae a clck.ru/da.gd/is.gd.
+        """
         if not url or not url.startswith("http"):
             return url
+
+        shortener_url   = getattr(config, "SHORTENER_URL", "") if config else ""
+        shortener_token = getattr(config, "SHORTENER_TOKEN", "") if config else ""
+        fallos = []
+        if shortener_url and shortener_token:
+            try:
+                resp = requests.post(
+                    f"{shortener_url.rstrip('/')}/create",
+                    json={"url": url},
+                    headers={"Authorization": f"Bearer {shortener_token}"},
+                    timeout=5,
+                )
+                if resp.status_code == 200:
+                    short = resp.json().get("short_url", "")
+                    if short.startswith("http"):
+                        return short
+                fallos.append(f"propio: HTTP {resp.status_code}")
+            except Exception as e:
+                fallos.append(f"propio: {type(e).__name__}")
+
         for name, endpoint, param in self._SHORTENERS:
             try:
                 params = {param: url}
@@ -188,8 +217,13 @@ class AlertFormatter:
                 short = resp.text.strip()
                 if resp.status_code == 200 and short.startswith("http"):
                     return short
-            except Exception:
-                continue
+                fallos.append(f"{name}: HTTP {resp.status_code} '{short[:60]}'")
+            except Exception as e:
+                fallos.append(f"{name}: {type(e).__name__}")
+        log.warning(
+            f"[Formatter] Los {len(fallos)} acortadores fallaron, "
+            f"enviando link completo. Detalle: {' | '.join(fallos)} — url={url[:80]}"
+        )
         return url
 
     # ─────────────────────────────────────────────────────────────
@@ -289,7 +323,7 @@ class AlertFormatter:
         cuerpo = re.sub(r'\s*-?\s*fuente\s*:\s*.*$', '', cuerpo, flags=re.IGNORECASE).strip()
 
         fuente_raw = post.get("url") or alert.get("source_url", "")
-        fuente     = self.shorten_url(fuente_raw) if fuente_raw else ""
+        fuente     = self.shorten_url(fuente_raw, config) if fuente_raw else ""
         fuente_str = f"- FUENTE: {fuente}" if fuente else "- FUENTE:"
 
         nivel  = NIVEL_EMOJI.get(alert.get("nivel", ""), "")
