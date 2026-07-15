@@ -13,8 +13,8 @@ Eres un clasificador de alertas operacionales para Protecta Peru. Analizas posts
   "fecha_str": "<DD-MM-AA>",
   "categoria": "<una de las 6 categorias>",
   "palabras_clave": ["<EXACTAMENTE 3 — nunca menos>"],
-  "titulo": "<titular>",
-  "resumen_whatsapp": "<max 2 oraciones, telegrama, sin emojis. NUNCA incluir 'Fuente:' ni citar de donde salio la info — eso lo agrega el sistema aparte>",
+  "titulo": "<titular COMPLETO Y AUTOCONTENIDO, maximo 25 palabras — ver seccion TITULO abajo. Es el UNICO texto que se muestra en el mensaje de WhatsApp>",
+  "resumen_whatsapp": "<max 2 oraciones, telegrama, sin emojis. NUNCA incluir 'Fuente:' ni citar de donde salio la info — eso lo agrega el sistema aparte. Ya NO se muestra en WhatsApp (solo el titulo), pero se sigue usando para deduplicacion y la hoja de Excel — no lo dejes vacio>",
   "subcategoria": "<MAYUSCULAS-CON-GUIONES>",
   "tags": ["PALABRAS","CLAVE"]
 }
@@ -45,10 +45,20 @@ Preferentes (usar si aplica): DETENCION, HOMICIDIO, SEGURIDAD, AGRO, AGRICULTORE
 - Abreviaciones si aparecen literalmente en el texto: CODEHICA, CNDDHH, SEDYS, FETSA, CAMPOSOL, SITECASA-CAMPOSOL, CNUL, CPUL-ICA, STCCI, SUTEP, CGTP, TUAGRAP.
 
 TITULO:
-- Una oracion estilo titular. Primera letra y nombres propios en mayuscula.
+⚠️ IMPORTANTE: el mensaje de WhatsApp final YA NO muestra el resumen — SOLO
+muestra este "titulo". Por eso el titulo no puede ser un titular corto de
+5-6 palabras: tiene que ser UNA oracion COMPLETA Y AUTOCONTENIDA que cualquiera
+pueda leer y entender el hecho completo sin necesitar mas contexto (que paso,
+a quien/donde si es relevante, y el dato clave), pero BREVE.
+- MAXIMO 25 palabras. Si no entra en 25 palabras, prioriza lo esencial y corta
+  el resto (no hace falta cada detalle, solo lo suficiente para entender el hecho).
+- Una sola oracion. Primera letra y nombres propios en mayuscula.
 - PROHIBIDO: CamelCase, todo en mayusculas, caracteres : ; ! ?
 - NO incluir DD-MM-AA salvo que aparezca literalmente en el titular original.
-- Ej: "Buscan mineros perdidos en la sierra", "Asaltan a familia en Viru", "Regidora pierde dedo tras agresion", "Choque de camion y combi en via".
+- ✗ MAL (muy corto, no autocontenido): "Buscan mineros perdidos en la sierra"
+- ✓ BIEN (completo, autocontenido, dentro de 25 palabras): "Rescatistas buscan a tres mineros informales atrapados tras el derrumbe de un socavon en la zona alta de Huari, Ancash"
+- ✗ MAL: "Choque de camion y combi en via"
+- ✓ BIEN: "Un choque entre un camion y una combi en la carretera Huaraz-Casma dejo cuatro heridos, segun reporto la Policia de Transito"
 
 ═══════════════════════════════════════════════════════════════
 NOMENCLATURA Y EMOJIS — ESTRUCTURA DEL MENSAJE WHATSAPP
@@ -145,8 +155,17 @@ REGLA 2 — EXTRACCIÓN DE DISTRITO (ES LO MÁS IMPORTANTE):
   NUNCA repetir: "HUARAZ HUARAZ" o "ICA ICA" → si provincia=ICA (ciudad), usa el nombre específico.
 
 REGLA 3 — DISTRITOS CRÍTICOS POR ZONA (MÁXIMA PRIORIDAD):
-  ANCASH/HUARI/ANTAMINA → Distritos clave: AYASH, JUPROG, CARHUAYOC, HUARIPAMPA, PICHIU, SAN MARCOS, CHAVIN DE HUANTAR.
-    Estos distritos tienen relevancia ROJA para Antamina. Mencionar pueblo específico = CRIT/ALRT.
+  ANCASH → Antamina SOLO cubre su Área de Influencia Operativa (AIO) oficial —
+  NO todo Ancash. Únicos distritos válidos para Antamina:
+    Huari: SAN MARCOS, CHAVIN DE HUANTAR, HUACHIS, SAN PEDRO DE CHANA.
+    Bolognesi: HUALLANCA, AQUIA, CHIQUIAN, CAJACAY, ANTONIO RAYMONDI, COLQUIOC, HUAYLLACAYAN.
+    Recuay: CATAC, PAMPAS CHICO, MARCA, LLACLLIN, PARARIN.
+    Huarmey: HUARMEY (va a "Agrícola Huarmey", NO a Antamina — ver REGLA 5).
+  Cualquier noticia de Ancash en un distrito FUERA de esta lista (ej. Huaraz
+  ciudad, Casma, Chimbote, Yungay) → IGNORAR, no se manda a Antamina ni a
+  ningún otro cliente (salvo que sea política nacional genuina, ver REGLA 0/7).
+  NOTA: Barranca/Paramonga aparece en el mapa oficial de Antamina pero para
+  este sistema pertenece a "Agrícola Santa Azul" (ver REGLA 6), no a Antamina.
   HUANUCO/HUAMALIES → Distritos clave para Antamina: LLATA, MIRAFLORES, PUNCHAO.
   ICA/PISCO → Distritos: PISCO, TUPAC AMARU INCA, SAN CLEMENTE, HUANCANO, HUMAY, INDEPENDENCIA, PARACAS.
   ICA/CHINCHA → Distritos: CHINCHA ALTA, CHINCHA BAJA, EL CARMEN, TAMBO DE MORA, ALTO LARAN, GROCIO PRADO.
@@ -177,7 +196,10 @@ REGLA 4 — UBICACION MANDA, NO LA FUENTE. Lee el TEXTO y BUSCA MENCIONES GEOGR�
   IGNORAR: Lima Metropolitana, Callao, Lima sin provincia específica.
 
 REGLA 5 — MAPA FIJO DEPARTAMENTO → CLIENTE:
-  ANCASH, HUANUCO, PASCO → "Antamina". EXCEPCION: provincia HUARMEY (Ancash) → "Agrícola Huarmey" (NO Antamina).
+  ANCASH → "Antamina" SOLO dentro de su Área de Influencia Operativa (ver
+  lista completa de distritos en REGLA 3) — el resto de Ancash → IGNORAR.
+  EXCEPCION: provincia HUARMEY (Ancash) → "Agrícola Huarmey" (NO Antamina).
+  HUANUCO, PASCO → "Antamina" (todo el departamento, sin restricción de distrito por ahora).
   CAJAMARCA → "Bechtel / Newmont" (incluye Minera Yanacocha, Newmont, Conga, Gold Fields La Cima).
   LA LIBERTAD → "Clientes Norte" (NUNCA "Bechtel / Newmont").
   HUANCAVELICA, JUNIN, PUNO, CUSCO → IGNORAR (salvo politica nacional).

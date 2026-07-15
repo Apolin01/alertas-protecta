@@ -309,9 +309,10 @@ class AlertFormatter:
         titulo  = str(alert.get("titulo", "") or "").strip()
         resumen = str(alert.get("resumen_whatsapp", "") or "").strip()
 
-        # USAR SOLO resumen (no concatenar titulo + resumen para evitar repetición)
-        # Si no hay resumen, usar titulo como fallback
-        cuerpo = resumen if resumen else titulo
+        # SOLO título (ya no se concatena con el resumen) — el título ahora
+        # debe ser autocontenido y breve (ver prompt: max 25 palabras).
+        # Si por algo no hubiera título, se usa el resumen como respaldo.
+        cuerpo = titulo if titulo else resumen
 
         # A veces la IA repite el header completo dentro del resumen (ver
         # _strip_echoed_header) — se recorta antes de usarlo.

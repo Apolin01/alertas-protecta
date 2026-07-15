@@ -74,6 +74,9 @@ CITY_TO_DEPT = {
     "PISCO": "ICA",
     # ── LIMA (provincias rurales OK) ──
     "BARRANCA": "LIMA", "SUPE": "LIMA", "HUAURA": "LIMA", "HUARAL": "LIMA",
+    "HUACHO": "LIMA",  # capital de la provincia HUAURA — incidente real:
+                        # IA dijo "ANCASH HUARI" para una noticia de Huacho.
+
     # ── HUANUCO ──
     "TINGO MARIA": "HUANUCO", "LEONCIO PRADO": "HUANUCO",
     # ── PASCO ──
@@ -116,7 +119,7 @@ PROVINCIA_MULTI_CLIENTE_DEPT = {
 }
 
 
-def fix_dept_by_city(alert: dict) -> dict:
+def fix_dept_by_city(alert: dict, config=None) -> dict:
     """
     Si distrito/provincia es una ciudad conocida pero el departamento de la IA
     no coincide, se fuerza el departamento correcto. Corrige errores como
@@ -157,6 +160,24 @@ def fix_dept_by_city(alert: dict) -> dict:
             f"pero ciudad '{ciudad}' → '{dept_correcto}'"
         )
         alert["departamento"] = dept_correcto
+
+        # La provincia vieja (del departamento incorrecto) ya no tiene sentido
+        # bajo el departamento corregido — sin esto, ej. "HUACHO" corregia
+        # departamento a LIMA pero dejaba provincia="HUARI" (de Ancash), y el
+        # cliente nunca se recalculaba bien. Se busca en DEPT_PROV_DIST la
+        # provincia real que contiene a "ciudad" como distrito.
+        dept_prov_dist = getattr(config, "DEPT_PROV_DIST", {}) if config else {}
+        provincias_dept = dept_prov_dist.get(dept_correcto, {})
+        for prov_real, distritos in provincias_dept.items():
+            if ciudad in distritos:
+                alert["provincia"] = prov_real
+                alert["distrito"] = ciudad
+                break
+        else:
+            # No se encontro una provincia especifica — limpiar la vieja para
+            # no dejar una combinacion invalida (provincia de otro departamento).
+            alert["provincia"] = ""
+
         return alert
     return alert
 
@@ -176,6 +197,22 @@ DEPT_TO_CLIENT = {
     # de WhatsApp "Petrotal" no existe/no está conectado (193 envíos fallidos
     # en logs). Ya no se clasifican noticias de esos departamentos hacia
     # ningún cliente específico.
+}
+
+# Área de Influencia Operativa (AIO) oficial de Antamina en ANCASH — mapa de
+# la empresa (Mina San Marcos, Huallanca, Valle Fortaleza, Huarmey). Antamina
+# SOLO recibe alertas de estos distritos especificos, NO de todo Ancash (antes
+# se enrutaba cualquier noticia de Ancash a Antamina, generando mucho ruido de
+# zonas sin relacion — ej. Huaraz ciudad, Casma, Chimbote). HUARMEY no esta
+# en esta lista porque ya tiene su propio cliente ("Agrícola Huarmey", ver
+# PROVINCIA_TO_CLIENT) — se maneja aparte. Barranca/Paramonga aparece en el
+# mapa oficial de Antamina pero se EXCLUYE a proposito: esa zona ya pertenece
+# a "Agrícola Santa Azul" (LIMA, ver PROVINCIA_TO_CLIENT) para este sistema.
+ANCASH_AIO_DISTRITOS = {
+    "SAN MARCOS", "CHAVIN DE HUANTAR", "HUACHIS", "SAN PEDRO DE CHANA",  # Huari
+    "HUALLANCA", "AQUIA", "CHIQUIAN", "CAJACAY", "ANTONIO RAYMONDI",
+    "COLQUIOC", "HUAYLLACAYAN",                                          # Bolognesi
+    "CATAC", "PAMPAS CHICO", "MARCA", "LLACLLIN", "PARARIN",             # Recuay
 }
 
 
@@ -229,6 +266,7 @@ EMPLEO_TERMS = {
 AVISO_MUNICIPAL_TERMS = {
     "FESTIVAL", "ANIVERSARIO", "CHARLA", "ESTERILIZACION", "VACUNACION",
     "FERIA", "TALLER", "CONCURSO", "CAPACITACION", "JORNADA", "INFORMATIVA",
+    "EMPADRONAMIENTO", "PROFOPRI", "TITULACION-DE-PREDIOS",
 }
 
 # Términos que indican promoción personal de candidatura LOCAL/REGIONAL
@@ -242,6 +280,26 @@ CANDIDATURA_TERMS = {
     "CANDIDATA", "CANDIDATAS", "PRECANDIDATO", "PRECANDIDATA",
     "PRECANDIDATURA", "POSTULANTE", "POSTULANTES",
 }
+
+# Frases que indican autopromoción de campaña en el TEXTO (titulo+resumen),
+# no solo en subcategoria/palabras_clave — ej. "Jacky Olivera presenta su
+# plan de gobierno 2027-2030" tenia subcategoria/keywords genericas
+# (INCLUSION, DESARROLLO) que CANDIDATURA_TERMS no detectaba.
+CANDIDATURA_TEXTO_TERMS = (
+    "PLAN DE GOBIERNO", "PLAN DE TRABAJO", "PROPUESTA DE GOBIERNO",
+    "CANDIDATA A LA ALCALDIA", "CANDIDATO A LA ALCALDIA",
+    "CANDIDATA A LA PRESIDENCIA REGIONAL", "CANDIDATO A LA PRESIDENCIA REGIONAL",
+)
+
+# Términos que indican SEGUIMIENTO/aftermath de un homicidio (velorio, entierro,
+# proceso judicial) en vez del hecho mismo ocurriendo — ver REGLA 10 del prompt:
+# solo el hecho es CRIT, el seguimiento posterior es INFO. Red de seguridad
+# porque el prompt no siempre lo respeta (ej. nota de un velorio enviada CRIT).
+HOMICIDIO_AFTERMATH_TERMS = (
+    "VELORIO", "DESPIDEN", "ENTIERRO", "SEPELIO", "FUNERAL", "ULTIMO ADIOS",
+    "PRISION PREVENTIVA", "SENTENCIA", "CONDENA", "JUICIO", "AUDIENCIA",
+    "EXIGEN JUSTICIA", "EXIGIENDO JUSTICIA",
+)
 
 # Términos que indican promociones/sorteos/campañas comerciales — publicidad,
 # no noticia. Ej.: "Hidrandina lanza campaña para premiar a clientes puntuales
@@ -430,6 +488,26 @@ def fix_client_by_dept(alert: dict) -> dict:
     # Corregir cliente si el departamento es inequivoco
     correcto = DEPT_TO_CLIENT.get(departamento)
     if correcto:
+        # ANCASH: Antamina solo cubre su Area de Influencia Operativa (ver
+        # ANCASH_AIO_DISTRITOS), no todo el departamento. HUARMEY (provincia
+        # O distrito — por si la IA solo llena uno de los dos campos) se
+        # excluye por completo de este chequeo: tiene su propio cliente y no
+        # debe caer en el IGNORAR de Antamina bajo ninguna circunstancia. Se
+        # corrige aparte (fix_client_by_provincia / validacion final de
+        # HUARMEY en classify).
+        if (
+            departamento == "ANCASH"
+            and provincia != "HUARMEY"
+            and distrito != "HUARMEY"
+            and distrito not in ANCASH_AIO_DISTRITOS
+        ):
+            log.info(
+                f"Ancash fuera del Área de Influencia Operativa de Antamina "
+                f"(provincia='{provincia}' distrito='{distrito}') → IGNORAR"
+            )
+            alert["nivel"] = "IGNORAR"
+            return alert
+
         cliente_ia = alert.get("cliente", "")
         if cliente_ia != correcto:
             log.info(
@@ -549,13 +627,17 @@ class AlertClassifier:
             if alert.get("rubro") not in self.config.RUBROS_VALIDOS:
                 alert["rubro"] = self.config.get_rubro(alert.get("cliente", ""))
 
+            # Correccion dura ciudad→departamento (puede cambiar departamento a
+            # LIMA, ej. "Huacho" que la IA a veces ubica mal en Ancash) — debe
+            # correr ANTES del filtro Lima, para que ese filtro valide el
+            # departamento/provincia YA corregidos, no los originales.
+            alert = fix_dept_by_city(alert, self.config)
+
             # Filtro duro Lima
             if not is_lima_valida(alert):
                 alert["nivel"]  = "IGNORAR"
                 alert["cliente"] = "Ninguno (Coyuntura Nacional)"
 
-            # Correccion dura ciudad→departamento ANTES de validar
-            alert = fix_dept_by_city(alert)
             # Correccion dura por departamento + limpiar NO ESPECIFICA + filtro ubicacion
             alert = fix_client_by_dept(alert)
             # Correccion fina por provincia/distrito (mas granular que dept)
@@ -583,6 +665,9 @@ class AlertClassifier:
             # Opera como red de seguridad cuando el prompt no bloquea estos casos.
             subcateg  = (alert.get("subcategoria") or "").upper()
             kws_upper = {str(k).upper() for k in (alert.get("palabras_clave") or [])}
+            texto_completo = _strip_accents(
+                f"{alert.get('titulo','')} {alert.get('resumen_whatsapp','')}".upper()
+            )
             if any(t in subcateg for t in TURISMO_TERMS) or any(t in kws_upper for t in TURISMO_TERMS):
                 log.info(
                     f"Filtro turismo: subcategoria='{alert.get('subcategoria')}' "
@@ -625,13 +710,21 @@ class AlertClassifier:
             # Filtro duro: promoción personal de candidatura LOCAL/REGIONAL (nivel INFO)
             # → IGNORAR. Red de seguridad porque el prompt (REGLA 10) no siempre lo
             # filtra de forma consistente (visto en logs: candidatos a alcaldía
-            # enviados como INFO pese a la regla). NO aplica si departamento=NACIONAL
-            # (cobertura de elecciones generales/presidenciales, protegida por REGLA 0).
+            # enviados como INFO pese a la regla). Chequea subcategoria/keywords Y
+            # el texto (titulo+resumen) — algunas notas de campaña usan subcategoria
+            # generica ("INCLUSION", "DESARROLLO") sin mencionar "candidato" ahi,
+            # pero el texto SI dice "plan de gobierno", etc. NO aplica si
+            # departamento=NACIONAL (cobertura de elecciones generales/presidenciales,
+            # protegida por REGLA 0).
             departamento_check = (alert.get("departamento") or "").upper().strip()
             if (
                 alert.get("nivel") == "INFO"
                 and departamento_check != "NACIONAL"
-                and (any(t in subcateg for t in CANDIDATURA_TERMS) or any(t in kws_upper for t in CANDIDATURA_TERMS))
+                and (
+                    any(t in subcateg for t in CANDIDATURA_TERMS)
+                    or any(t in kws_upper for t in CANDIDATURA_TERMS)
+                    or any(t in texto_completo for t in CANDIDATURA_TEXTO_TERMS)
+                )
             ):
                 log.info(
                     f"Filtro candidatura local: subcategoria='{alert.get('subcategoria')}' "
@@ -639,12 +732,22 @@ class AlertClassifier:
                 )
                 alert["nivel"] = "IGNORAR"
 
+            # Filtro duro: seguimiento/aftermath de un homicidio (velorio, entierro,
+            # proceso judicial) enviado como CRIT en vez del hecho mismo → baja a INFO.
+            # Ver REGLA 10 del prompt: solo el hecho ocurriendo es CRIT.
+            if (
+                alert.get("nivel") == "CRIT"
+                and "HOMICID" in (subcateg + " " + " ".join(kws_upper))
+                and any(t in texto_completo for t in HOMICIDIO_AFTERMATH_TERMS)
+            ):
+                log.info(
+                    f"Filtro homicidio-aftermath: '{alert.get('titulo')}' CRIT → INFO"
+                )
+                alert["nivel"] = "INFO"
+
             # Filtro duro: trafico/usurpacion de terrenos (nivel INFO) → elevar a ALRT
             # Riesgo social para zonas agricolas/operativas, aunque la noticia se
             # enfoque en un funcionario o excandidato (no se bajan niveles CRIT/ALRT).
-            texto_completo = _strip_accents(
-                f"{alert.get('titulo','')} {alert.get('resumen_whatsapp','')}".upper()
-            )
             if alert.get("nivel") == "INFO" and any(t in texto_completo for t in TRAFICO_TERRENOS_TERMS):
                 log.info(
                     f"Filtro trafico de terrenos: '{alert.get('titulo')}' INFO → ALRT"
