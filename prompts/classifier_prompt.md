@@ -166,7 +166,8 @@ REGLA 3 — DISTRITOS CRÍTICOS POR ZONA (MÁXIMA PRIORIDAD):
   ningún otro cliente (salvo que sea política nacional genuina, ver REGLA 0/7).
   NOTA: Barranca/Paramonga aparece en el mapa oficial de Antamina pero para
   este sistema pertenece a "Agrícola Santa Azul" (ver REGLA 6), no a Antamina.
-  HUANUCO/HUAMALIES → Distritos clave para Antamina: LLATA, MIRAFLORES, PUNCHAO.
+  HUANUCO → Antamina SOLO cubre el distrito LLATA (provincia HUAMALIES). Cualquier
+  otro distrito de Huanuco → IGNORAR, no se manda a Antamina.
   ICA/PISCO → Distritos: PISCO, TUPAC AMARU INCA, SAN CLEMENTE, HUANCANO, HUMAY, INDEPENDENCIA, PARACAS.
   ICA/CHINCHA → Distritos: CHINCHA ALTA, CHINCHA BAJA, EL CARMEN, TAMBO DE MORA, ALTO LARAN, GROCIO PRADO.
   CAJAMARCA → Distritos: JAEN, CELENDIN, BAMBAMARCA, CHOTA, HUALGAYOC, SAN IGNACIO, CAJABAMBA.
@@ -199,7 +200,8 @@ REGLA 5 — MAPA FIJO DEPARTAMENTO → CLIENTE:
   ANCASH → "Antamina" SOLO dentro de su Área de Influencia Operativa (ver
   lista completa de distritos en REGLA 3) — el resto de Ancash → IGNORAR.
   EXCEPCION: provincia HUARMEY (Ancash) → "Agrícola Huarmey" (NO Antamina).
-  HUANUCO, PASCO → "Antamina" (todo el departamento, sin restricción de distrito por ahora).
+  HUANUCO → "Antamina" SOLO distrito LLATA (ver REGLA 3) — el resto de Huanuco → IGNORAR.
+  PASCO → "Antamina" (todo el departamento, sin restricción de distrito por ahora).
   CAJAMARCA → "Bechtel / Newmont" (incluye Minera Yanacocha, Newmont, Conga, Gold Fields La Cima).
   LA LIBERTAD → "Clientes Norte" (NUNCA "Bechtel / Newmont").
   HUANCAVELICA, JUNIN, PUNO, CUSCO → IGNORAR (salvo politica nacional).
@@ -234,21 +236,28 @@ llamativo suene):
   delitos), detenciones/capturas por motivos vagos o no relacionados a la lista
   (ej. una suboficial de policia vista manejando una moto sin casco con una menor,
   escandalos personales, faltas administrativas).
+  ⚠️ Esto aplica INCLUSO SI el abuso/violacion viene MEZCLADO con un delito que
+  normalmente si esta en la lista (ej. "capturan a sujeto por robo y abuso a
+  menores") — la presencia de abuso/violacion saca la noticia de alcance por
+  completo, IGNORAR, no se reporta ni como el delito acompañante.
 
   NIVEL SEGUN EL DELITO (no todo delito de la lista es automaticamente CRIT):
   - HOMICIDIO → CRIT SOLO cuando la noticia es sobre el HECHO MISMO ocurriendo o
     recien ocurrido: "mataron a X", "asesinan a X", "hallan cuerpo con signos de
     violencia", "sicarios acribillan a X". Eso es lo unico que cuenta como
     HOMICIDIO para nivel CRIT.
-    ⚠️ CUALQUIER SEGUIMIENTO POSTERIOR AL HECHO — detencion/captura de sospechosos,
-    proceso judicial, audiencia, prision preventiva, sentencia, juicio — NO es
-    CRIT. Baja a INFO (es noticia de seguimiento/justicia, no una alerta
-    operacional urgente sobre algo que esta pasando ahora).
+    ⚠️ CUALQUIER SEGUIMIENTO POSTERIOR AL HECHO — velorios, entierros, detencion/
+    captura de sospechosos, proceso judicial, audiencia, prision preventiva,
+    sentencia, juicio, familiares exigiendo justicia — NO es CRIT y TAMPOCO es
+    INFO: es IGNORAR directo (no es urgente ni relevante para el sistema, ya
+    paso el momento operacional del hecho).
     EJEMPLO: "Dictan prision preventiva contra conductor implicado en accidente
-    donde murieron 7 personas" → INFO, NO CRIT (es un fallo judicial sobre un
-    hecho ya pasado, no un homicidio ocurriendo).
-    EJEMPLO: "Detienen a sujeto por homicidio ocurrido la semana pasada" → INFO,
-    NO CRIT (es la captura de un sospechoso, no el homicidio en si).
+    donde murieron 7 personas" → IGNORAR (es un fallo judicial sobre un hecho
+    ya pasado, no un homicidio ocurriendo).
+    EJEMPLO: "Detienen a sujeto por homicidio ocurrido la semana pasada" →
+    IGNORAR (es la captura de un sospechoso, no el homicidio en si).
+    EJEMPLO: "Familiares despiden a las victimas exigiendo justicia" → IGNORAR
+    (es un velorio/reaccion, no el hecho ocurriendo).
   - Muerte por ACCIDENTE (transito, laboral, natural — NO un delito deliberado) →
     ALRT, no CRIT. Ejemplo: "Motociclista fallece tras choque con camion" → ALRT.
   - Los otros 11 delitos de la lista (EXTORSION, HURTO, ROBO, CONTRABANDO,

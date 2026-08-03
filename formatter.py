@@ -4,7 +4,9 @@ formatter.py — Genera los dos formatos de salida.
   2. FORMATO WHATSAPP → resumen con * para negrita
 """
 
+import os
 import re
+import time
 import logging
 import requests
 from datetime import datetime, timezone, timedelta
@@ -180,11 +182,17 @@ class AlertFormatter:
 
     def shorten_url(self, url: str, config=None) -> str:
         """
-        Acorta una URL. Si hay un acortador propio configurado (Cloudflare
-        Worker, ver cloudflare-shortener/) lo usa primero — es el mas
-        confiable porque corre en infraestructura propia, no un servicio
-        gratuito ajeno que puede caerse/bloquear. Si no esta configurado o
-        falla, cae a clck.ru/da.gd/is.gd.
+        Acorta una URL. El acortador propio (Cloudflare Worker, ver
+        cloudflare-shortener/) es el unico "de verdad" — corre en
+        infraestructura propia y no puede devolver un link ajeno. Se
+        reintenta hasta 3 veces con timeout generoso (ver comentario abajo)
+        antes de darlo por caido. Solo si el propio falla las tres veces se
+        cae a clck.ru/da.gd/is.gd — y ahi se exige que el link devuelto sea
+        realmente del dominio de ese servicio, porque algunos (ej. clck.ru)
+        si reciben una URL que YA es corta (ej. un tinyurl que el propio
+        medio de noticias puso en su post) responden 200 devolviendo el
+        mismo link sin acortar nada, y eso se tomaba como un acortado
+        exitoso.
         """
         if not url or not url.startswith("http"):
             return url
@@ -193,20 +201,29 @@ class AlertFormatter:
         shortener_token = getattr(config, "SHORTENER_TOKEN", "") if config else ""
         fallos = []
         if shortener_url and shortener_token:
-            try:
-                resp = requests.post(
-                    f"{shortener_url.rstrip('/')}/create",
-                    json={"url": url},
-                    headers={"Authorization": f"Bearer {shortener_token}"},
-                    timeout=5,
-                )
-                if resp.status_code == 200:
-                    short = resp.json().get("short_url", "")
-                    if short.startswith("http"):
-                        return short
-                fallos.append(f"propio: HTTP {resp.status_code}")
-            except Exception as e:
-                fallos.append(f"propio: {type(e).__name__}")
+            # El worker propio responde normalmente en 1.5-2s (mas lento de
+            # lo esperado para un Cloudflare Worker) — con timeout=5 y bajo
+            # carga real (varias alertas seguidas + llamadas a OpenAI/imagenes
+            # al mismo tiempo) alcanzaba a vencer y caia al respaldo. Se sube
+            # a 10s y 3 intentos para que un pico de lentitud puntual no lo
+            # tire a clck.ru/da.gd/is.gd.
+            for intento in range(3):
+                try:
+                    resp = requests.post(
+                        f"{shortener_url.rstrip('/')}/create",
+                        json={"url": url},
+                        headers={"Authorization": f"Bearer {shortener_token}"},
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        short = resp.json().get("short_url", "")
+                        if short.startswith("http"):
+                            return short
+                    fallos.append(f"propio intento {intento+1}: HTTP {resp.status_code}")
+                except Exception as e:
+                    fallos.append(f"propio intento {intento+1}: {type(e).__name__}: {e}")
+                if intento < 2:
+                    time.sleep(0.5)
 
         for name, endpoint, param in self._SHORTENERS:
             try:
@@ -215,7 +232,14 @@ class AlertFormatter:
                     params["format"] = "simple"
                 resp = requests.get(endpoint, params=params, timeout=5)
                 short = resp.text.strip()
-                if resp.status_code == 200 and short.startswith("http"):
+                # Debe ser realmente un link del dominio del servicio, no un
+                # eco de la URL de entrada (pasa con links ya cortos).
+                if (
+                    resp.status_code == 200
+                    and short.startswith("http")
+                    and short != url
+                    and name in short
+                ):
                     return short
                 fallos.append(f"{name}: HTTP {resp.status_code} '{short[:60]}'")
             except Exception as e:
@@ -301,6 +325,8 @@ class AlertFormatter:
             else:
                 ubicacion = dept
 
+        log.info(f"[DEBUG-fmt] PID={os.getpid()} file={__file__} dept_raw={dept_raw!r} prov_raw={prov_raw!r} dist_raw={dist_raw!r} -> ubicacion={ubicacion!r}")
+
         # Keywords: convertir CamelCase a palabras separadas, unir con " - "
         palabras = alert.get("palabras_clave", [])
         palabras_wa = [_strip_camel(str(p)) for p in palabras]
@@ -363,7 +389,7 @@ class AlertFormatter:
 
     def format_sheets_row(self, alert: dict, post: dict, config=None) -> list:
         """
-        Retorna lista de celdas en el mismo orden que las 23 columnas de Tabla_Informacion.
+        Retorna lista de celdas en el mismo orden que las 23 columnas de la hoja Informacion.
         Coincide exactamente con la estructura del Google Form.
         """
         now_dt   = datetime.now(_PERU_TZ)

@@ -364,7 +364,11 @@ class Config:
     GOOGLE_CREDENTIALS_FILE = "credentials.json"
     # ⚠️ El SPREADSHEET_ID estaba hardcodeado como default. Pasarlo via .env.
     SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "")
-    SHEET_NAME = "Tabla_Informacion"       # pestaña visible en imagen 1
+    SHEET_NAME = "Informacion"       # pestaña real donde escribe el bot — ver
+                                      # incidente 17-07-26: se habia cambiado a
+                                      # "Tabla_Informacion" (rama Pruebas) y el
+                                      # sistema escribio ~8 dias en la pestaña
+                                      # equivocada en vez de la historica
     OPERADOR_AUTOMATICO = "Sistema Automático"
     EMAIL_SISTEMA = "protecta.dev@gmail.com"
 

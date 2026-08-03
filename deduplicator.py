@@ -41,7 +41,8 @@ DEDUP_WINDOW_HOURS = 24               # ⭐ AMPLIADO: 12 → 24h (no repita en t
 DEDUP_SAME_BUNDLE_HOURS = 0.5         # 30 MINUTOS - mismo bundle = mismo evento
 DEDUP_SAME_SOURCE_HOURS = 6           # Ventana para misma fuente
 DEDUP_SAME_LOCATION_HOURS = 0.25      # 15 minutos - mismo depto + prov = probablemente dup
-DEDUP_SAME_PROVINCIA_HOURS = 2        # Ventana para comparacion semantica por IA (misma provincia)
+DEDUP_SAME_PROVINCIA_HOURS = 24       # ⭐ AMPLIADO: 2 → 24h (ver NIVEL 6 Caso B — antes no alcanzaba
+                                       # a cubrir reposts de la misma noticia horas despues)
 
 # Stopwords español + palabras frecuentes en titulares
 _STOPWORDS_ES = {
@@ -616,9 +617,15 @@ class Deduplicator:
                         return True
         
         # ⚡ NIVEL 6: IA FALLBACK — Comparación semántica (último recurso)
-        # Caso A: similitud media (0.30-0.35) en mismo departamento + últimas 6h —
-        #         títulos casi idénticos que no llegaron al umbral exacto.
-        # Caso B: MISMA PROVINCIA en ventana corta (2h), sin importar el score —
+        # Caso A: similitud media-baja (0.15-0.35) en mismo departamento + toda la
+        #         ventana de dedup (24h) — títulos parecidos pero que no llegaron
+        #         al umbral exacto. Incidente real: la misma noticia ("entrega de
+        #         terreno para la División Policial de Pisco") se envió 3 veces en
+        #         ~15h porque cada repost tenía un título redactado muy distinto
+        #         (Jaccard bajo) y la ventana vieja de 6h no llegaba a cubrir el
+        #         lapso entre envíos — se amplió a 24h y se bajó el piso de banda
+        #         de 0.30 a 0.15 para no descartar reformulaciones muy distintas.
+        # Caso B: MISMA PROVINCIA en toda la ventana de dedup, sin importar el score —
         #         distintas fuentes narran el MISMO EVENTO con palabras muy diferentes
         #         (ej. "naufragio en Paracas" vs "búsqueda de pescadores" vs
         #         "familiares buscan a Kenny Díaz" → los 3 son el mismo naufragio
@@ -626,11 +633,12 @@ class Deduplicator:
         if titulo and desc and dept:
             set_t_new = _words_set(titulo)
 
-            # Caso A: mismo departamento, ventana 6h, similitud media
-            cutoff_ia = (datetime.now() - timedelta(hours=6)).isoformat()
+            # Caso A: mismo departamento, ventana completa de dedup (24h), similitud media-baja
+            cutoff_ia = (datetime.now() - timedelta(hours=DEDUP_WINDOW_HOURS)).isoformat()
             cur.execute(
                 "SELECT titulo_norm, descripcion_norm FROM sent_alerts "
-                "WHERE departamento = %s AND sent_at > %s AND titulo_norm IS NOT NULL",
+                "WHERE departamento = %s AND sent_at > %s AND titulo_norm IS NOT NULL "
+                "ORDER BY sent_at DESC LIMIT 40",
                 (dept, cutoff_ia)
             )
             for (titulo_existente, desc_existente) in cur.fetchall():
@@ -638,7 +646,7 @@ class Deduplicator:
                     continue
                 set_t_exist = set(titulo_existente.split())
                 score_medio = _jaccard(set_t_new, set_t_exist)
-                if 0.30 <= score_medio < JACCARD_THRESHOLD_TITULO:
+                if 0.15 <= score_medio < JACCARD_THRESHOLD_TITULO:
                     log.debug(f"[Dedup] Comparando semánticamente (Jaccard={score_medio:.2f}): podría ser duplicado")
                     if _ai_are_same_event(
                         titulo, titulo_existente,

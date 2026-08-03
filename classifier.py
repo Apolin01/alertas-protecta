@@ -215,6 +215,10 @@ ANCASH_AIO_DISTRITOS = {
     "CATAC", "PAMPAS CHICO", "MARCA", "LLACLLIN", "PARARIN",             # Recuay
 }
 
+# Área de Influencia Operativa de Antamina en HUANUCO — mismo criterio que
+# ANCASH_AIO_DISTRITOS: solo este distrito, no todo Huanuco.
+HUANUCO_AIO_DISTRITOS = {"LLATA"}
+
 
 # ─────────────────────────────────────────────────────────────
 # MAPA DURO: PROVINCIA/DISTRITO → CLIENTE (mas granular que DEPT)
@@ -267,6 +271,8 @@ AVISO_MUNICIPAL_TERMS = {
     "FESTIVAL", "ANIVERSARIO", "CHARLA", "ESTERILIZACION", "VACUNACION",
     "FERIA", "TALLER", "CONCURSO", "CAPACITACION", "JORNADA", "INFORMATIVA",
     "EMPADRONAMIENTO", "PROFOPRI", "TITULACION-DE-PREDIOS",
+    "FESTEJO", "TOROS", "TAURINO", "CORRIDA",
+    "RECONOCIMIENTO", "RECONOCIMIENTOS", "HOMENAJE", "TRAYECTORIA",
 }
 
 # Términos que indican promoción personal de candidatura LOCAL/REGIONAL
@@ -278,7 +284,7 @@ AVISO_MUNICIPAL_TERMS = {
 CANDIDATURA_TERMS = {
     "CANDIDATURA", "CANDIDATURAS", "CANDIDATO", "CANDIDATOS",
     "CANDIDATA", "CANDIDATAS", "PRECANDIDATO", "PRECANDIDATA",
-    "PRECANDIDATURA", "POSTULANTE", "POSTULANTES",
+    "PRECANDIDATURA", "POSTULANTE", "POSTULANTES", "ELECCIONES",
 }
 
 # Frases que indican autopromoción de campaña en el TEXTO (titulo+resumen),
@@ -293,12 +299,22 @@ CANDIDATURA_TEXTO_TERMS = (
 
 # Términos que indican SEGUIMIENTO/aftermath de un homicidio (velorio, entierro,
 # proceso judicial) en vez del hecho mismo ocurriendo — ver REGLA 10 del prompt:
-# solo el hecho es CRIT, el seguimiento posterior es INFO. Red de seguridad
-# porque el prompt no siempre lo respeta (ej. nota de un velorio enviada CRIT).
+# solo el hecho es CRIT. El seguimiento posterior (velorios, prisión preventiva,
+# sentencias) no es urgente NI relevante para el sistema → IGNORAR directo, no
+# solo bajar de nivel. Red de seguridad porque el prompt no siempre lo respeta.
 HOMICIDIO_AFTERMATH_TERMS = (
     "VELORIO", "DESPIDEN", "ENTIERRO", "SEPELIO", "FUNERAL", "ULTIMO ADIOS",
     "PRISION PREVENTIVA", "SENTENCIA", "CONDENA", "JUICIO", "AUDIENCIA",
     "EXIGEN JUSTICIA", "EXIGIENDO JUSTICIA",
+)
+
+# Términos de abuso/violencia sexual — SIEMPRE fuera de alcance (ver REGLA 10),
+# incluso si aparecen junto a un delito que normalmente SI se considera (ej.
+# "robo y abuso a menores"): la presencia de abuso/violacion saca la noticia
+# de alcance por completo, no solo se ajusta el nivel.
+ABUSO_SEXUAL_TERMS = (
+    "ABUSO", "ABUSO SEXUAL", "VIOLACION", "VIOLACIÓN", "AGRESION SEXUAL",
+    "AGRESIÓN SEXUAL", "TOCAMIENTOS INDEBIDOS",
 )
 
 # Términos que indican promociones/sorteos/campañas comerciales — publicidad,
@@ -366,15 +382,26 @@ def fix_ica_provincia_by_text(alert: dict, texto: str, config) -> dict:
     return alert
 
 
+# Departamentos SIN cliente/zona de operacion — la IA a veces les asigna un
+# cliente valido igual (ej. Lambayeque → "Clientes Norte", por cercania a La
+# Libertad) aunque no esten en DEPT_TO_CLIENT ni PROVINCIA_TO_CLIENT. Estos
+# departamentos NUNCA deben ir a un cliente especifico.
+DEPARTAMENTOS_SIN_CLIENTE = {"AREQUIPA", "LAMBAYEQUE", "HUANCAVELICA", "JUNIN", "PUNO", "CUSCO"}
+
+
 def fix_arequipa_block(alert: dict) -> dict:
     """
-    REGLA DURA: Arequipa NUNCA va a 'Clientes Sur' ni a ningun cliente agro.
-    Unica excepcion: coyuntura politica nacional (presidente, congreso, candidatos)
+    REGLA DURA: los DEPARTAMENTOS_SIN_CLIENTE (Arequipa, Lambayeque,
+    Huancavelica, Junin, Puno, Cusco) NUNCA van a un cliente especifico —
+    ni Antamina, ni Clientes Sur/Norte, ni ningun cliente agro. Unica
+    excepcion: coyuntura politica nacional (presidente, congreso, candidatos)
     → 'Ninguno (Coyuntura Nacional)'. Cualquier otra cosa → IGNORAR.
-    Motivo: incidente 30-05-26 con noticia de Keiko Fujimori enviada a grupo agro sur.
+    Motivos: incidente 30-05-26 con noticia de Keiko Fujimori (Arequipa)
+    enviada a grupo agro sur; incidente con noticia de Lambayeque enviada a
+    Clientes Norte pese a no ser zona de operacion de Agro Norte.
     """
     dept = (alert.get("departamento") or "").upper().strip()
-    if dept != "AREQUIPA":
+    if dept not in DEPARTAMENTOS_SIN_CLIENTE:
         return alert
 
     categoria = (alert.get("categoria") or "").lower()
@@ -385,7 +412,8 @@ def fix_arequipa_block(alert: dict) -> dict:
         return alert
 
     log.info(
-        f"Arequipa bloqueada: cliente='{cliente}' categoria='{categoria}' → IGNORAR"
+        f"{dept} bloqueado (sin cliente/zona de operacion): cliente='{cliente}' "
+        f"categoria='{categoria}' → IGNORAR"
     )
     alert["nivel"] = "IGNORAR"
     alert["cliente"] = "Ninguno (Coyuntura Nacional)"
@@ -503,6 +531,15 @@ def fix_client_by_dept(alert: dict) -> dict:
         ):
             log.info(
                 f"Ancash fuera del Área de Influencia Operativa de Antamina "
+                f"(provincia='{provincia}' distrito='{distrito}') → IGNORAR"
+            )
+            alert["nivel"] = "IGNORAR"
+            return alert
+
+        # HUANUCO: mismo criterio, Antamina solo cubre LLATA (ver HUANUCO_AIO_DISTRITOS).
+        if departamento == "HUANUCO" and distrito not in HUANUCO_AIO_DISTRITOS:
+            log.info(
+                f"Huanuco fuera del Área de Influencia Operativa de Antamina "
                 f"(provincia='{provincia}' distrito='{distrito}') → IGNORAR"
             )
             alert["nivel"] = "IGNORAR"
@@ -733,17 +770,27 @@ class AlertClassifier:
                 alert["nivel"] = "IGNORAR"
 
             # Filtro duro: seguimiento/aftermath de un homicidio (velorio, entierro,
-            # proceso judicial) enviado como CRIT en vez del hecho mismo → baja a INFO.
-            # Ver REGLA 10 del prompt: solo el hecho ocurriendo es CRIT.
+            # proceso judicial) en vez del hecho mismo ocurriendo → IGNORAR directo
+            # (ni CRIT ni INFO — no es urgente ni relevante). Ver REGLA 10 del prompt.
             if (
-                alert.get("nivel") == "CRIT"
+                alert.get("nivel") in ("CRIT", "INFO")
                 and "HOMICID" in (subcateg + " " + " ".join(kws_upper))
                 and any(t in texto_completo for t in HOMICIDIO_AFTERMATH_TERMS)
             ):
                 log.info(
-                    f"Filtro homicidio-aftermath: '{alert.get('titulo')}' CRIT → INFO"
+                    f"Filtro homicidio-aftermath: '{alert.get('titulo')}' → IGNORAR"
                 )
-                alert["nivel"] = "INFO"
+                alert["nivel"] = "IGNORAR"
+
+            # Filtro duro: abuso/violencia sexual — SIEMPRE fuera de alcance, incluso
+            # si viene junto a un delito que normalmente si cuenta (ej. "robo y abuso
+            # a menores"). No aplica a INFO puro sin delito de por medio para no
+            # bloquear contenido ya filtrado en otro lado; se activa en cualquier nivel.
+            if any(t in subcateg for t in ABUSO_SEXUAL_TERMS) or any(t in kws_upper for t in ABUSO_SEXUAL_TERMS) or any(t in texto_completo for t in ABUSO_SEXUAL_TERMS):
+                log.info(
+                    f"Filtro abuso/violencia sexual: '{alert.get('titulo')}' → IGNORAR"
+                )
+                alert["nivel"] = "IGNORAR"
 
             # Filtro duro: trafico/usurpacion de terrenos (nivel INFO) → elevar a ALRT
             # Riesgo social para zonas agricolas/operativas, aunque la noticia se

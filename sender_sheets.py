@@ -1,7 +1,7 @@
 """
 sender_sheets.py — Inserta alertas en el mismo Google Sheets que usa el Form.
 
-La hoja 'Tabla_Informacion' ya tiene las columnas del Form. El sistema agrega
+La hoja 'Informacion' ya tiene las columnas del Form. El sistema agrega
 filas nuevas al final con el mismo formato, más columnas extra de metadatos.
 """
 
