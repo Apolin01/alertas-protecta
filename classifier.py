@@ -372,6 +372,20 @@ SALUD_ASISTENCIAL_TERMS = (
     "CONSULTAS MEDICAS", "PACIENTES ATENDIDOS", "CAMPAÑA DE SALUD",
     "BRIGADA MEDICA", "VACUNACION", "VACUNACIÓN", "DESPISTAJE", "TAMIZAJE",
     "EQUIPAMIENTO MEDICO", "CIRUGIAS", "CIRUGÍAS", "TRASPLANTE",
+    "UNIDAD MEDICA", "ATENCION DE URGENCIAS", "ATENCION MEDICA",
+    "TOPICO", "POSTA MEDICA", "CENTRO DE SALUD", "SERVICIO DE EMERGENCIA",
+    "MEJORA LA ATENCION", "MEJORA ATENCION", "AMBULANCIA",
+)
+
+# Anuncios de programas, transmisiones y entrevistas: "hoy se estrena X",
+# "no te pierdas", "sintoniza". El TEMA puede ser relevante (Fenomeno del Niño,
+# agro), pero la noticia es la emision del programa, no un hecho con impacto.
+PROGRAMA_MEDIOS_TERMS = (
+    "SE ESTRENA", "ESTRENO", "NO TE LO PIERDAS", "NO TE PIERDAS",
+    "SINTONIZA", "SIGUE LA TRANSMISION", "EN VIVO POR", "TRANSMISION EN VIVO",
+    "NUEVO PROGRAMA", "ESTE DOMINGO EN", "ESTE SABADO EN", "PROXIMO PROGRAMA",
+    "INVITADO DE HOY", "ENTREVISTA EXCLUSIVA", "CONDUCE", "EPISODIO",
+    "TE ESPERAMOS EN", "SIGUENOS EN", "PODCAST",
 )
 
 # Excepcion a lo anterior: si la noticia de salud es sobre obra o infraestructura,
@@ -934,6 +948,16 @@ class AlertClassifier:
                 for t in SALUD_ASISTENCIAL_TERMS
             ) and not any(t in texto_completo for t in SALUD_INFRA_TERMS):
                 log.info(f"Filtro salud asistencial: '{alert.get('titulo')}' → IGNORAR")
+                alert["nivel"] = "IGNORAR"
+
+            # Filtro duro: anuncio de programa/transmision → IGNORAR aunque el tema
+            # sea relevante. La noticia es que sale al aire un programa, no un
+            # hecho con impacto operacional.
+            if any(
+                t in texto_completo or t in subcateg or t in kws_upper
+                for t in PROGRAMA_MEDIOS_TERMS
+            ):
+                log.info(f"Filtro programa/medios: '{alert.get('titulo')}' → IGNORAR")
                 alert["nivel"] = "IGNORAR"
 
             # Filtro duro: abuso/violencia sexual — SIEMPRE fuera de alcance, incluso

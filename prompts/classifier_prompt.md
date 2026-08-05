@@ -402,6 +402,16 @@ NIVELES:
        señalizacion, ciclovias. Son propuestas, no hechos con impacto.
        Ej: "Proponen implementar WiFi gratuito en los parques de Ica"
        NO aplica si hay protesta, obra paralizada o conflicto de por medio.
+    q) ANUNCIOS DE PROGRAMAS, TRANSMISIONES Y ENTREVISTAS: "hoy se estrena",
+       "no te lo pierdas", "sintoniza", "en vivo por", nuevo podcast, episodio,
+       invitado del programa. IGNORAR AUNQUE EL TEMA SEA RELEVANTE — la noticia
+       es que un programa sale al aire, no un hecho con impacto operacional.
+       Ej: "Hoy se estrena 'Voces del Agro' con el presidente de ADAS para
+           hablar sobre el Fenomeno El Niño 2026" → IGNORAR
+       Si en cambio el medio REPORTA declaraciones con contenido (una cifra, un
+       anuncio, una advertencia concreta), eso SI se clasifica por su tema.
+       Ej: "Presidente de ADAS advierte que El Niño reduciria 30% la cosecha
+           de esparrago" → SI entra, es un hecho con dato.
     f) EMERGENCIAS PUNTUALES DE RESCATE sin impacto colectivo: bomberos asistiendo
        un parto, rescate de una persona o animal, auxilios individuales.
        Ej: "Bomberos asisten parto de emergencia y salvan a madre y recien nacido"
