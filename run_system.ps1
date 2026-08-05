@@ -1,4 +1,4 @@
-# run_system.ps1 - Ejecuta ambos procesos en paralelo (PowerShell)
+﻿# run_system.ps1 - Ejecuta ambos procesos en paralelo (PowerShell)
 # Uso: powershell -ExecutionPolicy Bypass -File run_system.ps1
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -46,8 +46,10 @@ Write-Host "[*] Esperando 5 segundos para que el bridge se inicie..." -Foregroun
 Start-Sleep -Seconds 5
 
 # Iniciar main.py
+# Se invoca el python del .venv por ruta explicita: la ventana nueva arranca
+# sin el entorno activado, y el python del sistema no tiene psycopg2.
 Write-Host "[2/2] Iniciando sistema de alertas..." -ForegroundColor Green
-$mainProcess = Start-ProcessInNewWindow -Title "Sistema de Alertas" -Command "python main.py" -WorkingDirectory (Get-Location)
+$mainProcess = Start-ProcessInNewWindow -Title "Sistema de Alertas" -Command "& '.\.venv\Scripts\python.exe' main.py" -WorkingDirectory (Get-Location)
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan

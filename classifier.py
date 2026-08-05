@@ -205,9 +205,9 @@ DEPT_TO_CLIENT = {
 # se enrutaba cualquier noticia de Ancash a Antamina, generando mucho ruido de
 # zonas sin relacion — ej. Huaraz ciudad, Casma, Chimbote). HUARMEY no esta
 # en esta lista porque ya tiene su propio cliente ("Agrícola Huarmey", ver
-# PROVINCIA_TO_CLIENT) — se maneja aparte. Barranca/Paramonga aparece en el
-# mapa oficial de Antamina pero se EXCLUYE a proposito: esa zona ya pertenece
-# a "Agrícola Santa Azul" (LIMA, ver PROVINCIA_TO_CLIENT) para este sistema.
+# PROVINCIA_TO_CLIENT) — se maneja aparte. Barranca/Paramonga tampoco esta
+# aqui porque no es Ancash: entra por PROVINCIA_TO_CLIENT["BARRANCA"], que
+# desde la eliminacion del cliente agro de Lima apunta a Antamina.
 ANCASH_AIO_DISTRITOS = {
     "SAN MARCOS", "CHAVIN DE HUANTAR", "HUACHIS", "SAN PEDRO DE CHANA",  # Huari
     "HUALLANCA", "AQUIA", "CHIQUIAN", "CAJACAY", "ANTONIO RAYMONDI",
@@ -223,7 +223,7 @@ HUANUCO_AIO_DISTRITOS = {"LLATA"}
 # ─────────────────────────────────────────────────────────────
 # MAPA DURO: PROVINCIA/DISTRITO → CLIENTE (mas granular que DEPT)
 # ICA tiene multiples clientes: Pisco va al grupo Pisco; Chincha/Nasca/Palpa/Ica
-# van a Clientes Sur. Lima costera (Barranca/Supe/Huaura) → Santa Azul.
+# van a Clientes Sur. De Lima solo sobrevive BARRANCA (Paramonga → Antamina).
 # Las keys deben ir SIN TILDES y en MAYUSCULAS.
 # ─────────────────────────────────────────────────────────────
 PROVINCIA_TO_CLIENT = {
@@ -233,10 +233,10 @@ PROVINCIA_TO_CLIENT = {
     "NAZCA":    "Clientes Sur",
     "PALPA":    "Clientes Sur",
     "ICA":      "Clientes Sur",            # provincia Ica (no la de Pisco)
-    "BARRANCA": "Agrícola Santa Azul",
-    "SUPE":     "Agrícola Santa Azul",
-    "HUAURA":   "Agrícola Santa Azul",
-    "HUARAL":   "Agrícola Santa Azul",  # ⭐ Fix #7: HUARAL pasaba filtro Lima pero no tenía cliente
+    # Barranca/Paramonga es UGT Valle Fortaleza de Antamina. SUPE, HUAURA y
+    # HUARAL se retiraron junto con el cliente agro que los cubría: ya no
+    # tienen destino y caen en IGNORAR.
+    "BARRANCA": "Antamina",
     "HUARMEY":  "Agrícola Huarmey",
 }
 
@@ -315,6 +315,72 @@ HOMICIDIO_AFTERMATH_TERMS = (
 ABUSO_SEXUAL_TERMS = (
     "ABUSO", "ABUSO SEXUAL", "VIOLACION", "VIOLACIÓN", "AGRESION SEXUAL",
     "AGRESIÓN SEXUAL", "TOCAMIENTOS INDEBIDOS",
+)
+
+# Términos que indican que la noticia trata de una DETENCION/captura policial.
+# Una detencion NUNCA es CRIT: el hecho delictivo ya ocurrio y hubo respuesta
+# policial, asi que el riesgo activo desaparecio. Aplica incluso cuando el
+# delito de fondo es homicidio o feminicidio (que por si solos si serian CRIT).
+DETENCION_TERMS = (
+    "DETENCION", "DETENCIÓN", "DETENIDO", "DETENIDA", "DETENIDOS", "DETENIDAS",
+    "DETIENEN", "DETUVIERON", "CAPTURA", "CAPTURADO", "CAPTURADOS", "CAPTURAN",
+    "ARRESTO", "ARRESTADO", "ARRESTADOS", "INTERVENIDO", "INTERVENIDOS",
+    "CAE BANDA", "CAYERON", "REQUISITORIADO", "APRESADO", "APREHENDIDO",
+)
+
+# Igual que DETENCION: cuando la noticia es la INVESTIGACION de un hecho ya
+# ocurrido (Fiscalía investiga, diligencias preliminares, peritaje), el riesgo
+# activo ya paso y hay respuesta institucional en marcha → ALRT, no CRIT.
+INVESTIGACION_TERMS = (
+    "INVESTIGA", "INVESTIGAN", "INVESTIGACION", "INVESTIGACIÓN",
+    "INVESTIGACIONES", "DILIGENCIAS", "DILIGENCIAS PRELIMINARES",
+    "PERITAJE", "PERICIA", "INDAGA", "ABRE INVESTIGACION", "FISCALIA INVESTIGA",
+)
+
+# Un FALLECIMIENTO solo es CRIT cuando es ASESINATO o SICARIATO. Cualquier otra
+# muerte — incendio, accidente, ahogamiento, derrumbe, enfermedad — es ALRT.
+MUERTE_TERMS = (
+    "FALLECE", "FALLECEN", "FALLECIDO", "FALLECIDA", "FALLECIDOS",
+    "FALLECIMIENTO", "MUERE", "MUEREN", "MUERTO", "MUERTA", "MUERTOS",
+    "MUERTE", "DECESO", "PERDIO LA VIDA", "PIERDE LA VIDA", "VICTIMA MORTAL",
+    "VICTIMAS MORTALES", "CADAVER", "OCCISO",
+)
+
+# Terminos que SI justifican CRIT en una muerte: es homicidio doloso. Incluye
+# balacera/arma de fuego porque una muerte a balazos es homicidio aunque el
+# titular no use la palabra "asesinato".
+MUERTE_CRIT_TERMS = (
+    "ASESIN", "SICARI", "HOMICID", "FEMINICID", "CRIMEN", "MATAN A", "MATO A",
+    "BALACERA", "BALEADO", "BALEADA", "BALEARON", "DISPAROS", "ARMA DE FUEGO",
+    "ACRIBILLADO", "APUNALADO", "APUÑALADO", "DESCUARTIZ",
+)
+
+# Fauna silvestre / animales — fuera de alcance operacional por completo:
+# rescates, avistamientos, liberaciones, maltrato animal.
+FAUNA_TERMS = (
+    "FAUNA", "FAUNA SILVESTRE", "ANIMAL SILVESTRE", "SERFOR",
+    "AVISTAMIENTO", "MALTRATO ANIMAL", "RESCATE DE ANIMAL",
+    "AVE SILVESTRE", "ESPECIE SILVESTRE",
+)
+
+# Salud asistencial — estadisticas de atenciones, equipamiento, campañas,
+# logros hospitalarios. Solo interesa la salud cuando se trata de OBRAS o
+# INFRAESTRUCTURA (construccion, ampliacion, obra paralizada) — ver
+# SALUD_INFRA_TERMS, que rescata esos casos.
+SALUD_ASISTENCIAL_TERMS = (
+    "TOMOGRAFIA", "TOMOGRAFÍA", "TOMOGRAFO", "TOMÓGRAFO", "ATENCIONES",
+    "CONSULTAS MEDICAS", "PACIENTES ATENDIDOS", "CAMPAÑA DE SALUD",
+    "BRIGADA MEDICA", "VACUNACION", "VACUNACIÓN", "DESPISTAJE", "TAMIZAJE",
+    "EQUIPAMIENTO MEDICO", "CIRUGIAS", "CIRUGÍAS", "TRASPLANTE",
+)
+
+# Excepcion a lo anterior: si la noticia de salud es sobre obra o infraestructura,
+# SI es relevante (inversion, obra paralizada, hospital sin terminar).
+SALUD_INFRA_TERMS = (
+    "OBRA", "OBRAS", "CONSTRUCCION", "CONSTRUCCIÓN", "INFRAESTRUCTURA",
+    "AMPLIACION", "AMPLIACIÓN", "PARALIZADA", "PARALIZADO", "EXPEDIENTE TECNICO",
+    "LICITACION", "LICITACIÓN", "INVERSION", "INVERSIÓN", "PRESUPUESTO",
+    "NUEVO HOSPITAL", "MEJORAMIENTO",
 )
 
 # Términos que indican promociones/sorteos/campañas comerciales — publicidad,
@@ -647,6 +713,35 @@ class AlertClassifier:
                     kws.append("INFORMACION")
                 alert["palabras_clave"] = kws[:3]
 
+            # Filtro duro: sacar de palabras_clave el departamento/provincia/distrito.
+            # Ya salen impresos al inicio del mensaje, repetirlos es ruido
+            # ("ANCASH HUARMEY - INVERSION - PARQUE - HUARMEY"). Solo se descarta la
+            # coincidencia EXACTA: un nombre propio que contiene el lugar
+            # (MunicipalidadDeHuarmey, MinaMagistral) se conserva porque es la
+            # entidad de la que trata la noticia, no la ubicacion del hecho.
+            ubic = {
+                _strip_accents(str(alert.get(c, "") or "").upper().strip())
+                for c in ("departamento", "provincia", "distrito")
+            }
+            ubic.discard("")
+            if ubic:
+                limpias = [
+                    k for k in alert["palabras_clave"]
+                    if _strip_accents(str(k).upper().strip()) not in ubic
+                ]
+                if len(limpias) != len(alert["palabras_clave"]):
+                    log.info(
+                        f"Palabras clave con ubicacion removidas: "
+                        f"{alert['palabras_clave']} → {limpias}"
+                    )
+                    # Reponer hasta 3 sin volver a meter un nombre de lugar.
+                    for relleno in ("SEGURIDAD", "SOCIAL", "INFORMACION"):
+                        if len(limpias) >= 3:
+                            break
+                        if relleno not in limpias:
+                            limpias.append(relleno)
+                    alert["palabras_clave"] = limpias[:3]
+
             # Validar nivel — la IA a veces devuelve basura aca (ej. confundio el
             # campo y puso el mismo texto que "cliente"). Sin esto, un nivel
             # invalido pasa silencioso hasta el formateo del WhatsApp, donde
@@ -780,6 +875,65 @@ class AlertClassifier:
                 log.info(
                     f"Filtro homicidio-aftermath: '{alert.get('titulo')}' → IGNORAR"
                 )
+                alert["nivel"] = "IGNORAR"
+
+            # Filtro duro: DETENCION siempre es ALRT, nunca CRIT. El delito de
+            # fondo puede ser homicidio (que aisladamente si es CRIT), pero si la
+            # noticia es sobre la captura, el riesgo activo ya paso. Se degrada
+            # aqui en codigo porque la regla del prompt sola no se respetaba.
+            if alert.get("nivel") == "CRIT" and any(
+                t in texto_completo or t in subcateg or t in kws_upper
+                for t in DETENCION_TERMS
+            ):
+                log.info(
+                    f"Filtro detencion: '{alert.get('titulo')}' → CRIT degradado a ALRT"
+                )
+                alert["nivel"] = "ALRT"
+
+            # Filtro duro: la INVESTIGACION de un hecho ya ocurrido es ALRT, no
+            # CRIT — mismo criterio que la detencion. "Fiscalia investiga
+            # fallecimiento de trabajador en mina" → ALRT.
+            if alert.get("nivel") == "CRIT" and any(
+                t in texto_completo or t in subcateg or t in kws_upper
+                for t in INVESTIGACION_TERMS
+            ):
+                log.info(
+                    f"Filtro investigacion: '{alert.get('titulo')}' → CRIT degradado a ALRT"
+                )
+                alert["nivel"] = "ALRT"
+
+            # Filtro duro: una muerte solo es CRIT si es asesinato o sicariato.
+            # Incendio, accidente, ahogamiento, derrumbe o enfermedad → ALRT,
+            # por grave que sea. Corre DESPUES de detencion/investigacion para
+            # que esos casos ya hayan bajado por su cuenta.
+            if alert.get("nivel") == "CRIT" and any(
+                t in texto_completo or t in subcateg or t in kws_upper
+                for t in MUERTE_TERMS
+            ) and not any(
+                t in texto_completo or t in subcateg or t in kws_upper
+                for t in MUERTE_CRIT_TERMS
+            ):
+                log.info(
+                    f"Filtro muerte-no-homicidio: '{alert.get('titulo')}' "
+                    f"→ CRIT degradado a ALRT"
+                )
+                alert["nivel"] = "ALRT"
+
+            # Filtro duro: fauna silvestre — fuera de alcance operacional.
+            if any(
+                t in texto_completo or t in subcateg or t in kws_upper
+                for t in FAUNA_TERMS
+            ):
+                log.info(f"Filtro fauna: '{alert.get('titulo')}' → IGNORAR")
+                alert["nivel"] = "IGNORAR"
+
+            # Filtro duro: salud asistencial (estadisticas, equipamiento, campañas)
+            # → IGNORAR. Se rescata solo si la noticia es de obra/infraestructura.
+            if any(
+                t in texto_completo or t in subcateg or t in kws_upper
+                for t in SALUD_ASISTENCIAL_TERMS
+            ) and not any(t in texto_completo for t in SALUD_INFRA_TERMS):
+                log.info(f"Filtro salud asistencial: '{alert.get('titulo')}' → IGNORAR")
                 alert["nivel"] = "IGNORAR"
 
             # Filtro duro: abuso/violencia sexual — SIEMPRE fuera de alcance, incluso

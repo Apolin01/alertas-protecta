@@ -59,6 +59,39 @@ class AlertQueue:
                 sent_at     TEXT
             )
         """)
+        # Contador de intentos — evita que una alerta se reintente sin límite
+        # durante toda la ventana de 4h de get_recent_unsent (hasta 48 rondas).
+        cur.execute("ALTER TABLE pending ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0")
+        self.conn.commit()
+
+    # ─────────────────────────────────────────────────────────────
+    # CLAIM / RELEASE — exclusión mutua de envío
+    # ─────────────────────────────────────────────────────────────
+    # El envío es "at-least-once" por naturaleza: si el bridge entrega el
+    # mensaje pero la confirmación HTTP se pierde (timeout), el emisor no
+    # puede distinguirlo de un fallo real. Sin exclusión, la alerta se
+    # reenvía y el grupo recibe el duplicado.
+    #
+    # claim() marca la fila ANTES de enviar, de forma atómica. Como el UPDATE
+    # lleva `AND sent=0`, solo un proceso puede ganarla — esto vale también
+    # entre instancias distintas de main.py que comparten el mismo Postgres.
+    def claim(self, alert_id: int) -> bool:
+        """Reserva la alerta para envío. True si la ganó este proceso."""
+        cur = self._cursor()
+        cur.execute(
+            "UPDATE pending SET sent=1, sent_at=%s, attempts=attempts+1 "
+            "WHERE id=%s AND sent=0 RETURNING id",
+            (datetime.now().isoformat(), alert_id)
+        )
+        won = cur.fetchone() is not None
+        self.conn.commit()
+        return won
+
+    def release(self, alert_id: int):
+        """Devuelve la alerta a la cola. Solo tras un fallo CONFIRMADO
+        (bridge inalcanzable / grupo inexistente), nunca tras un timeout."""
+        cur = self._cursor()
+        cur.execute("UPDATE pending SET sent=0, sent_at=NULL WHERE id=%s", (alert_id,))
         self.conn.commit()
 
     def clear_pending(self):
@@ -145,15 +178,20 @@ class AlertQueue:
         )
         return [r[0] for r in cur.fetchall()]
 
-    def get_recent_unsent(self, max_age_hours: int = 4) -> dict[str, list[dict]]:
-        """Retorna alertas no enviadas de las últimas N horas, agrupadas por grupo."""
+    def get_recent_unsent(self, max_age_hours: int = 4,
+                          max_attempts: int = 5) -> dict[str, list[dict]]:
+        """Retorna alertas no enviadas de las últimas N horas, agrupadas por grupo.
+
+        Se excluyen las que ya agotaron max_attempts: si el bridge sigue caído
+        tras 5 rondas, insistir cada 5 min durante 4h no cambia el resultado.
+        """
         from datetime import timedelta
         cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
         cur = self._cursor()
         cur.execute(
             "SELECT id, group_name, message, image_url, alert_json FROM pending "
-            "WHERE sent=0 AND created_at > %s ORDER BY id",
-            (cutoff,)
+            "WHERE sent=0 AND created_at > %s AND attempts < %s ORDER BY id",
+            (cutoff, max_attempts)
         )
         groups: dict[str, list[dict]] = {}
         for r in cur.fetchall():

@@ -10,8 +10,8 @@ If Not oFSO.FolderExists(sDir & "\logs") Then
     oFSO.CreateFolder(sDir & "\logs")
 End If
 
-' Matar instancia previa del bridge en puerto 3001
-oShell.Run "cmd /c for /f ""tokens=5"" %a in ('netstat -ano ^| findstr "":3001 "" ^| findstr LISTENING') do taskkill /F /PID %a >nul 2>&1", 0, True
+' Matar instancia previa del bridge en puerto 3000
+oShell.Run "cmd /c for /f ""tokens=5"" %a in ('netstat -ano ^| findstr "":3000 "" ^| findstr LISTENING') do taskkill /F /PID %a >nul 2>&1", 0, True
 WScript.Sleep 1500
 
 ' 1. Iniciar WhatsApp Bridge (ventana oculta)
@@ -26,7 +26,7 @@ oShell.Run "cmd /c cd /d """ & sDir & """ && .venv\Scripts\python.exe main.py", 
 
 ' Confirmacion visual (aparece una sola vez y desaparece al cerrar)
 MsgBox "Sistema Alertas Protecta iniciado en segundo plano." & vbCrLf & vbCrLf & _
-       "WhatsApp QR:  http://localhost:3001/qr" & vbCrLf & vbCrLf & _
+       "WhatsApp QR:  http://localhost:3000/qr" & vbCrLf & vbCrLf & _
        "Logs bridge:  logs\bridge.log" & vbCrLf & _
        "Logs alertas: alertas.log" & vbCrLf & vbCrLf & _
        "Para detener: detener_sistema.bat", _

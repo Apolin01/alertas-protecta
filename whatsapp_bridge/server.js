@@ -27,7 +27,7 @@ console.error = (...args) => {
 // ─────────────────────────────────────────────
 // CONFIGURACION
 // ─────────────────────────────────────────────
-const PORT       = process.env.PORT || 3001;
+const PORT       = process.env.PORT || 3000;
 const AUTH_TOKEN = process.env.BRIDGE_TOKEN || "protecta2026";
 const DATA_PATH  = process.env.WA_DATA_PATH || "/app";
 const AUTH_DIR   = path.join(DATA_PATH, ".wwebjs_auth", "baileys_auth");
@@ -41,12 +41,10 @@ const GROUP_MAP = {
     "Clientes Sur":                 "GII - Agro sur - Protecta Peru",
     "Clientes Norte":               "GII - Agro norte - Protecta Peru",
     // Variantes CON tilde (forma canonica usada por Python config.py)
-    "Agrícola Santa Azul":          "GII - Agro norte - Agrícola Santa azul - Protecta Peru",
     "Agrícola Huarmey":             "GII - Agro norte - Protecta Peru",
     "Agrícola 3P":                  "GII - Agro norte - Protecta Peru",
     "Agrícola Chapi":               "GII - Agro sur - Protecta Peru",
     // Variantes SIN tilde (alias de seguridad)
-    "Agricola Santa Azul":          "GII - Agro norte - Agrícola Santa azul - Protecta Peru",
     "Agricola Huarmey":             "GII - Agro norte - Protecta Peru",
     "Agricola 3P":                  "GII - Agro norte - Protecta Peru",
     "Agricola Chapi":               "GII - Agro sur - Protecta Peru",

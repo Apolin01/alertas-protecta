@@ -181,17 +181,25 @@ def retry_unsent(queue: AlertQueue, wa_sender: WhatsAppSender, dedup: Deduplicat
                     log.info(f"[REINTENTO] imagen fallback generada para bridge")
 
             with _send_lock:
+                # Reservar antes de enviar — ver AlertQueue.claim().
+                if not queue.claim(item["id"]):
+                    continue
                 ok = wa_sender.send(group, item["message"], image_url=image_url)
-            if ok:
-                queue.mark_sent(item["id"])
+            if ok is True:
                 log.info(f"[REINTENTO] ✓ Enviado a '{group}'")
                 try:
                     _alert_data = json.loads(item.get("alert_json", "{}"))
                     dedup.mark_alert_sent(_alert_data)
                 except Exception:
                     pass
-            else:
+            elif ok is False:
+                queue.release(item["id"])
                 log.warning(f"[REINTENTO] ✗ Aún sin bridge para '{group}'")
+            else:
+                log.warning(
+                    f"[REINTENTO] ? Sin confirmar para '{group}' — "
+                    f"se deja como enviada para no duplicar"
+                )
             time.sleep(1)
 
 
@@ -234,21 +242,32 @@ def flush_all_pending(queued_ids: list[int], queue: AlertQueue,
                 log.debug(f"[ENVIO] sin imagen")
 
             with _send_lock:
+                # Reservar antes de enviar — ver AlertQueue.claim().
+                # Si otra instancia de main.py ya la tomó, aquí se corta.
+                if not queue.claim(item["id"]):
+                    log.info(f"[ENVIO] — alerta {item['id']} ya reclamada, se omite")
+                    continue
+
                 ok = wa_sender.send(
                     group,
                     item["message"],
                     image_url=image_url
                 )
 
-                if ok:
-                    queue.mark_sent(item["id"])
+                if ok is True:
                     log.info(f"[ENVIO] ✓ Enviado a '{group}'")
                     # ⭐ Fix #3: NO re-llamar dedup.mark_alert_sent aquí.
                     # process_page ya lo marca ANTES de encolar (línea ~331), por lo que
                     # llamarlo de nuevo era doble trabajo + doble log. retry_unsent SÍ lo
                     # llama porque ahí proviene de un proceso anterior que pudo perder estado.
-                else:
+                elif ok is False:
+                    queue.release(item["id"])
                     log.error(f"[ENVIO] ✗ FALLO '{group}' — WhatsApp no conectado o grupo no encontrado")
+                else:
+                    log.warning(
+                        f"[ENVIO] ? Sin confirmar '{group}' — "
+                        f"se deja como enviada para no duplicar"
+                    )
                 time.sleep(1)
 
     # ⭐ Fix #6: cleanup_old movido al cierre de ciclo en run_forever (ejecutar por página era desperdicio).

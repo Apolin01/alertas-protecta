@@ -30,6 +30,23 @@ CATEGORIAS (usar EXACTAMENTE estos nombres):
 PALABRAS_CLAVE (SIEMPRE 3 — obligatorio):
 NUNCA devuelvas menos de 3.
 NUNCA incluir palabras genericas como: UBICACION, LUGAR, ZONA, EVENTO, INFORMACION, NOTICIA, ALERTA, REPORTE, etc.
+
+⚠️ PROHIBIDO REPETIR LA UBICACION EN LAS PALABRAS CLAVE.
+El departamento, la provincia y el distrito YA salen impresos al inicio del
+mensaje. Volver a ponerlos como palabra clave es informacion duplicada.
+NUNCA uses como palabra clave el nombre del departamento, provincia, distrito,
+centro poblado, caserio, barrio o AA.HH. donde ocurre el hecho.
+  ✗ MAL: "ANCASH HUARMEY - INVERSION - PARQUE - HUARMEY"   (HUARMEY repetido)
+  ✗ MAL: "ICA - CLIMA - ICA - TEMPERATURA"                  (ICA repetido)
+  ✗ MAL: "CAJAMARCA - CORTE SUPERIOR - DIA DEL JUEZ - CAJAMARCA"
+  ✓ BIEN: "ANCASH HUARMEY - INVASION - PARQUE - VECINOS"
+  ✓ BIEN: "ICA - CLIMA - TEMPERATURA - PRONOSTICO"
+UNICA EXCEPCION: cuando ese nombre es parte del NOMBRE PROPIO de la entidad de
+la que trata la noticia, no la ubicacion del hecho.
+  ✓ BIEN: MunicipalidadDeHuarmey, HospitalDeChota, UniversidadNacionalDeCajamarca,
+          MinaMagistral, ProyectoOlmos, GobiernoRegionalDeAncash
+Si al quitar la ubicacion te quedan menos de 3, completa con el tema, el actor
+o la consecuencia del hecho — nunca con otro nombre de lugar.
 Preferentes (usar si aplica): DETENCION, HOMICIDIO, SEGURIDAD, AGRO, AGRICULTORES, AGUA, MEDIOAMBIENTE, SOCIAL, POLITICA, SALUD, DENGUE, FENOMENO DEL NINO, ECONOMIA, EXPORTACIONES.
 - Una palabra: MAYUSCULAS normales (HOMICIDIO, AGUA, SEGURIDAD).
 - Compuestas o frases: CamelCase (PozoDeAgua, ObrasPorImpuesto, NuevosRiegos).
@@ -41,7 +58,6 @@ Preferentes (usar si aplica): DETENCION, HOMICIDIO, SEGURIDAD, AGRO, AGRICULTORE
   Mineria: ANTAMINA, YANACOCHA, NEWMONT, BECHTEL, CONGA.
   Agro Sur (solo ICA, NUNCA Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY-FARMS, SUN-FRUITS, VANGUARD, RVR, UVICA, CAMPOS-DEL-SUR, DON-LUIS, DON-RICARDO.
   Agro Norte (La Libertad/costa): CASA-GRANDE, DANPER, MISSION, HORTIFRUT, GREEN-PERU, HASS, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA, LAREDO, ADAS, CAMPO-ANDINO.
-  Otros: AGRICOLA-SANTA-AZUL.
 - Abreviaciones si aparecen literalmente en el texto: CODEHICA, CNDDHH, SEDYS, FETSA, CAMPOSOL, SITECASA-CAMPOSOL, CNUL, CPUL-ICA, STCCI, SUTEP, CGTP, TUAGRAP.
 
 TITULO:
@@ -150,7 +166,8 @@ REGLA 2 — EXTRACCIÓN DE DISTRITO (ES LO MÁS IMPORTANTE):
   Ejemplos:
     - "En Ayash (Ancash Huaraz)" → departamento=ANCASH, provincia=HUARAZ, distrito=AYASH
     - "En Pichiu, provincia Huaraz" → departamento=ANCASH, provincia=HUARAZ, distrito=PICHIU
-    - "Protesta en Llata" → departamento=ANCASH (por Antamina), provincia=HUARAZ, distrito=LLATA
+    - "Protesta en Llata" → departamento=HUANUCO, provincia=HUAMALIES, distrito=LLATA
+      (Llata NO es Ancash. Etiquetarla como ANCASH la saca del AIO y termina en IGNORAR.)
     - "Trabajador en Huaripampa" → departamento=ANCASH, provincia=HUARAZ, distrito=HUARIPAMPA
   NUNCA repetir: "HUARAZ HUARAZ" o "ICA ICA" → si provincia=ICA (ciudad), usa el nombre específico.
 
@@ -164,8 +181,8 @@ REGLA 3 — DISTRITOS CRÍTICOS POR ZONA (MÁXIMA PRIORIDAD):
   Cualquier noticia de Ancash en un distrito FUERA de esta lista (ej. Huaraz
   ciudad, Casma, Chimbote, Yungay) → IGNORAR, no se manda a Antamina ni a
   ningún otro cliente (salvo que sea política nacional genuina, ver REGLA 0/7).
-  NOTA: Barranca/Paramonga aparece en el mapa oficial de Antamina pero para
-  este sistema pertenece a "Agrícola Santa Azul" (ver REGLA 6), no a Antamina.
+  NOTA: Barranca/Paramonga (LIMA) SI es zona de Antamina — es la UGT Valle
+  Fortaleza. No es Ancash, asi que entra por REGLA 6, no por esta regla.
   HUANUCO → Antamina SOLO cubre el distrito LLATA (provincia HUAMALIES). Cualquier
   otro distrito de Huanuco → IGNORAR, no se manda a Antamina.
   ICA/PISCO → Distritos: PISCO, TUPAC AMARU INCA, SAN CLEMENTE, HUANCANO, HUMAY, INDEPENDENCIA, PARACAS.
@@ -207,12 +224,45 @@ REGLA 5 — MAPA FIJO DEPARTAMENTO → CLIENTE:
   HUANCAVELICA, JUNIN, PUNO, CUSCO → IGNORAR (salvo politica nacional).
   AREQUIPA → IGNORAR SIEMPRE. Unica excepcion: politica nacional pura (presidente, congreso, candidatos en campaña) → "Ninguno (Coyuntura Nacional)". NUNCA enrutar Arequipa a "Clientes Sur" ni a ningun cliente agro, aunque la noticia mencione agricultores, fertilizantes o agroindustria.
 
-REGLA 6 — LIMA: solo procesar si menciona EXPLICITAMENTE BARRANCA, SUPE, HUAURA o HUARAL → "Agrícola Santa Azul". Lima Metropolitana / Callao / Lima sin provincia → IGNORAR (salvo politica nacional).
+REGLA 6 — LIMA: solo procesar si menciona EXPLICITAMENTE PARAMONGA o la provincia de BARRANCA → "Antamina" (es la UGT Valle Fortaleza, extremo sur del corredor minero). Todo el resto de Lima — Metropolitana, Callao, SUPE, HUAURA, HUARAL, o Lima sin provincia — → IGNORAR (salvo politica nacional).
 
 REGLA 7 — "Ninguno (Coyuntura Nacional)":
   (a) Gobierno central (presidente, congreso, ministerios) anunciando politicas/decisiones que SI afectan una region de operacion especifica → enrutar a esa region/cliente. Si menciona Ancash → Antamina. Si menciona Cajamarca → Bechtel / Newmont.
   (b) PROCESO ELECTORAL NACIONAL → ver REGLA 0 (PRIORIDAD MAXIMA, al inicio de esta seccion). Resultados ONPE/JNE, conteo de actas, votos por departamento/region, candidatos, encuestas, debates → SIEMPRE NACIONAL → "Ninguno (Coyuntura Nacional)", aunque se mencionen nombres de departamentos en las cifras.
   IMPORTANTE: noticias de elecciones nacionales (resultados, candidatos, ONPE, JNE) NUNCA deben ser IGNORAR — como minimo van como INFO a "Ninguno (Coyuntura Nacional)" (ver REGLA 0). Solo se ignoran si son contenido puramente de entretenimiento/humor sobre las elecciones sin informacion (memes, chistes).
+
+  (c) ALCANCE TEMATICO — SOLO estos temas entran a "Ninguno (Coyuntura Nacional)".
+      Si la noticia no encaja en ninguno de los siguientes, NO va a este grupo:
+      1. PROTESTAS Y PAROS DE ALCANCE NACIONAL: marchas, paros nacionales, huelgas
+         de gremios nacionales (CGTP, SUTEP, transportistas, agrarios), bloqueos
+         convocados a nivel nacional o multirregional.
+      2. CONFLICTOS POR LEYES: debate, aprobacion, derogacion u observacion de
+         leyes y decretos; reacciones y rechazo de gremios o partidos ante una norma.
+      3. PRESIDENTA Y GOBIERNO CENTRAL: declaraciones, decisiones, viajes,
+         nombramientos, mocion de vacancia, interpelacion, censura, crisis de gabinete.
+      4. MINISTERIO DE ENERGIA Y MINAS (MINEM): politica minera y energetica
+         nacional, concesiones, canon, formalizacion minera (REINFO), mineria ilegal
+         como asunto de politica nacional, tarifas de energia.
+      5. MIDAGRI / AGRICULTURA: politica agraria nacional, precios de fertilizantes,
+         creditos agrarios, emergencia agraria, agua para riego como politica nacional.
+      6. MINISTERIO DE ECONOMIA (MEF) Y ECONOMIA NACIONAL: presupuesto publico,
+         PBI, inflacion, tipo de cambio, inversion publica, exportaciones, riesgo
+         pais, retiro de fondos (AFP/CTS), medidas tributarias.
+      7. MINISTERIO DEL INTERIOR (MININTER): politica de seguridad nacional, estados
+         de emergencia, extorsion como problema nacional, PNP como institucion,
+         cambios de ministro o comandancia general.
+      8. ELECCIONES: ver (b) y REGLA 0.
+      9. ALCALDES Y AUTORIDADES ELECTAS: solo cuando el hecho tiene relevancia
+         nacional (denuncias, detenciones, revocatorias, conflictos con el gobierno
+         central) o cuando ocurre en una zona de operacion.
+
+  (d) NO ENVIAR a "Ninguno (Coyuntura Nacional)" — aunque sean de Lima o nacionales:
+      farandula y espectaculos, deportes, clima o transito rutinario, sucesos
+      policiales locales de Lima sin dimension politica (un robo, un choque),
+      salud o educacion sin conflicto ni norma de por medio, efemerides,
+      campanas municipales y eventos culturales. Todo eso → IGNORAR.
+      Criterio unico: si el hecho no toca gobierno, norma, conflicto social,
+      economia nacional o proceso electoral, NO pertenece a este grupo.
 
 REGLA 8 — Sin ubicacion clara reconocible de zonas de operacion → IGNORAR. No inventar ubicaciones.
 
@@ -270,6 +320,33 @@ llamativo suene):
 
 NIVELES:
 - CRIT: homicidios (ver REGLA 10), balaceras, denuncias a empresas cliente, bloqueos de operaciones, explosivos, derrames, secuestros, feminicidios, mineria ilegal (operativos, conflictos, denuncias), eventos en zonas criticas (Ayash, Juprog, Carhuayoc, Huaripampa, Pichiu, Llata para Antamina).
+  ⚠️ EXCEPCION QUE MANDA SOBRE TODO LO ANTERIOR — DETENCION SIEMPRE ES ALRT:
+  si la noticia trata de una DETENCION, CAPTURA, ARRESTO o INTERVENCION POLICIAL
+  de una persona, el nivel es ALRT — NUNCA CRIT — sin importar cual sea el delito.
+  Incluye la detencion por HOMICIDIO: el homicidio en si es CRIT, pero la
+  detencion del responsable es ALRT. El hecho ya ocurrio y hay respuesta policial;
+  no es un riesgo activo.
+    - "Sujeto asesina a comerciante en Chota" → CRIT (el homicidio)
+    - "PNP captura a presunto asesino de comerciante en Chota" → ALRT (la detencion)
+    - "Detienen a banda de extorsionadores" → ALRT
+    - "Cae requisitoriado por feminicidio" → ALRT
+  ⚠️ UNA MUERTE SOLO ES CRIT SI ES ASESINATO O SICARIATO.
+  Cualquier otro fallecimiento — incendio, accidente, ahogamiento, derrumbe,
+  electrocucion, enfermedad, accidente laboral — es ALRT, por grave que sea.
+  Lo que hace CRIT a una muerte es que sea homicidio doloso, no la cantidad de
+  victimas ni lo tragico del hecho.
+    - "Sicarios asesinan a comerciante en su local" → CRIT
+    - "Balacera deja dos muertos en el mercado" → CRIT (muerte por arma de fuego)
+    - "Feminicidio en Chimbote" → CRIT
+    - "Dos hermanos fallecen atrapados en un incendio" → ALRT (no es homicidio)
+    - "Trabajador muere tras caida en obra" → ALRT
+    - "Tres fallecidos en choque en la carretera" → ALRT
+    - "Nino muere ahogado en canal de regadio" → ALRT
+  ⚠️ MISMO CRITERIO PARA LA INVESTIGACION DE UN HECHO YA OCURRIDO → ALRT:
+  "Fiscalia investiga", "abren diligencias preliminares", "peritaje", "indagan".
+  El hecho ya paso y hay respuesta institucional en marcha; no es riesgo activo.
+    - "Trabajador muere en mina Magistral" → CRIT (el hecho)
+    - "Fiscalia investiga fallecimiento de trabajador en mina Magistral" → ALRT
 - ALRT: accidentes en vias (incluye fallecidos por accidente, ver REGLA 10), huaicos, derrumbes, cortes de via, huelgas, incendios, robos a empresas, protestas, detencion de dirigentes, detenciones por los delitos de la REGLA 10, trafico de terrenos / traficantes de terrenos / usurpacion o invasion de terrenos / venta irregular de lotes (aunque la noticia se enfoque en un funcionario o excandidato político, el trafico de terrenos es un riesgo social para zonas agricolas/operativas cercanas).
   EJEMPLO ALRT POR TRAFICO DE TERRENOS: "Exalcalde habria entregado titulos de propiedad a traficantes de terrenos en Medio Mundo" → ALRT (no INFO), agregar "TraficoDeTerrenos" o similar a palabras_clave.
 - INFO: inversiones, avances de obra o inauguraciones DE LA EMPRESA CLIENTE (proyectos propios, responsabilidad social — ver lista de REGLA 9), reuniones con comunidades, produccion positiva, acuerdos, proyectos, politica regional, politica nacional/proceso electoral (resultados ONPE/JNE, declaraciones de candidatos, conteo de actas, votos por departamento, segunda vuelta presidencial) → SIEMPRE "Ninguno (Coyuntura Nacional)" (departamento=NACIONAL), sin importar si se menciona el nombre de un departamento dentro del conteo de votos (ver REGLA 7b).
@@ -281,6 +358,74 @@ NIVELES:
   OTROS EJEMPLOS IGNORAR (fuera de alcance operacional):
     - Personas desaparecidas: busquedas, hallazgos o cualquier noticia sobre desaparecidos (ver REGLA 10) — fuera de alcance completo.
     - Violacion / agresion sexual sin relacion directa a un cliente (ver REGLA 10) — fuera de alcance.
+
+  IGNORAR — RUIDO LOCAL SIN VALOR OPERACIONAL (lista ampliada, aplicar al 100%):
+  Ninguno de estos casos afecta operaciones, ni implica conflicto social, ni es
+  politica nacional. Van SIEMPRE a IGNORAR aunque ocurran en zona de operacion:
+    a) PEDIDOS DE AYUDA Y CASOS PERSONALES: colectas, campañas solidarias, familias
+       que piden apoyo economico o medico, casos clinicos individuales.
+       Ej: "Madre clama ayuda para salvar la vida de su bebita internada en Lima"
+    b) SERVICIOS BASICOS RUTINARIOS: cortes o suspension de agua/luz por rotura,
+       mantenimiento o trabajos programados; avisos de alcantarillado, recojo de
+       basura, limpieza publica, recomendaciones de cuidado de infraestructura.
+       Ej: "Suspension del servicio de agua por rotura de tuberia"
+       Ej: "Cuidemos las tapas de buzon del alcantarillado"
+       NO aplica si hay PROTESTA, reclamo colectivo o conflicto por el agua → ALRT.
+    c) ACTOS PROTOCOLARES E INSTITUCIONALES: ceremonias, dias conmemorativos,
+       juramentaciones, condecoraciones, sesiones solemnes, discursos de bienvenida.
+       Ej: "Ceremonia por el Dia del Juez con palabras del presidente de la corte"
+    d) TRAMITES ADMINISTRATIVOS SIN CONFLICTO: convocatoria o reemplazo de
+       consejeros/regidores, designaciones de rutina, cambios de personal edil.
+       Ej: "Convocan a consejera regional en reemplazo de otra"
+       NO aplica si hay vacancia, revocatoria, denuncia o disputa → segun corresponda.
+    e) SALUD Y EDUCACION SIN CONFLICTO: brigadas y campañas medicas, atenciones
+       itinerantes, inscripciones de institutos/academias, oferta de carreras.
+       Ej: "Brigada de la Mision Cubana atendera en Huambocancha Alta"
+       Ej: "NORMEDIC anuncia inicio de inscripciones para carreras tecnicas"
+       TAMBIEN: estadisticas y logros asistenciales — numero de atenciones,
+       cirugias, equipamiento nuevo, tomografos, aniversarios de hospitales.
+       Ej: "Hospital de Trujillo supera las 31 mil tomografias con su moderno
+           tomografo" → IGNORAR
+       UNICA EXCEPCION: la salud SI es relevante cuando la noticia trata de
+       OBRA o INFRAESTRUCTURA — construccion o ampliacion de un hospital, obra
+       paralizada, inversion, licitacion, expediente tecnico.
+       Ej: "Obra del nuevo hospital de Chota lleva dos años paralizada" → SI entra
+    n) FAUNA SILVESTRE Y ANIMALES: rescates, avistamientos, liberaciones,
+       maltrato animal, intervenciones de SERFOR. Fuera de alcance por completo.
+       Ej: "Rescate de fauna silvestre en el colegio San Andres"
+    o) TRAMITES Y ATENCION CIUDADANA: programas de orientacion o acercamiento de
+       entidades publicas (SUNARP, RENIEC, SUNAT, Poder Judicial, Defensoria),
+       campañas de tramites, mesas de partes itinerantes, horarios de atencion.
+       Ej: "Zona Registral realizara el programa 'Sunarp te Escucha'"
+    p) PROPUESTAS Y MEJORAS URBANAS SIN CONFLICTO: iniciativas de regidores o
+       vecinos para WiFi, alumbrado, ornato, parques, mobiliario urbano,
+       señalizacion, ciclovias. Son propuestas, no hechos con impacto.
+       Ej: "Proponen implementar WiFi gratuito en los parques de Ica"
+       NO aplica si hay protesta, obra paralizada o conflicto de por medio.
+    f) EMERGENCIAS PUNTUALES DE RESCATE sin impacto colectivo: bomberos asistiendo
+       un parto, rescate de una persona o animal, auxilios individuales.
+       Ej: "Bomberos asisten parto de emergencia y salvan a madre y recien nacido"
+    g) INFRAESTRUCTURA RECREATIVA: losas deportivas, parques, plazas, coliseos
+       deteriorados o abandonados.
+       Ej: "La losa deportiva del sector El Porvenir se encuentra en abandono"
+    h) SIMULACROS Y PREVENCION PROGRAMADA: simulacros de sismo, evacuacion,
+       ejercicios multipeligro, charlas de Defensa Civil.
+       Ej: "Ica se prepara para el Gran Simulacro Nacional Multipeligro"
+    i) CLIMA RUTINARIO: pronosticos, temperaturas, cielo nublado o despejado.
+       NO aplica a huaicos, inundaciones o emergencias climaticas reales → ALRT/CRIT.
+    j) PREMIOS, CONCURSOS Y RECONOCIMIENTOS: finalistas, nominaciones, rankings,
+       logros institucionales.
+       Ej: "El C5 de Ica es finalista en los Premios ALAS 2026"
+    k) APUESTAS, CASINOS Y JUEGOS DE AZAR: crecimiento del rubro, ludopatia,
+       advertencias sobre el juego.
+       Ej: "Crecimiento de establecimientos de apuestas deportivas"
+    l) OPINION, SOLIDARIDAD Y MENSAJES PERSONALES: columnas, saludos, mensajes de
+       apoyo o desagravio a una persona, reflexiones sin hecho noticioso.
+       Ej: "La humildad no se critica, se respeta; solidaridad con Cheito Marquezado"
+    m) ORGANIZACION VECINAL O GREMIAL SIN CONFLICTO: comerciantes o vecinos que se
+       coordinan, acuerdan mejoras o se organizan por su cuenta.
+       Ej: "Comerciantes del mercado se organizan para dar seguridad a sus clientes"
+       NO aplica si hay paro, protesta, desalojo o enfrentamiento → ALRT/CRIT.
     - Desalojo (de viviendas, comercios, invasiones urbanas) que NO sea trafico/usurpacion de terrenos cerca de zona operativa (ese caso SI es ALRT, ver EJEMPLO ALRT POR TRAFICO DE TERRENOS arriba).
     - Tecnologia en salud, avances medicos, campañas o noticias de hospitales sin relacion a un cliente.
     - Candidatura de alguien a un cargo LOCAL/REGIONAL (alcaldia, gobierno regional, congreso) — promocion personal de un candidato. Esto NO aplica a cobertura de ELECCIONES GENERALES/PRESIDENCIALES NACIONALES (ver REGLA 0, esa SIEMPRE es minimo INFO).
@@ -295,7 +440,6 @@ CLIENTES VALIDOS (usar EXACTAMENTE estos nombres, CON tildes donde corresponde):
 "Antamina" — ANCASH, HUANUCO, PASCO.
 "Bechtel / Newmont" — CAJAMARCA (todas sus provincias). Empresas: Minera Yanacocha, Newmont, Conga, Bechtel.
 "Pisco" — ICA provincia Pisco, costera pesquera.
-"Agrícola Santa Azul" — LIMA: BARRANCA, SUPE, HUAURA, HUARAL.
 "Agrícola Huarmey" — ANCASH provincia HUARMEY.
 "Agrícola 3P" — LA LIBERTAD.
 "Agrícola Chapi" — ICA (no Pisco).

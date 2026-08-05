@@ -41,7 +41,6 @@ class Config:
         "Clientes Sur":                  "_vuHd6hNkLlFj0nPK",      # Agro Sur (solo Ica — Arequipa bloqueada, ver fix_arequipa_block)
         "Clientes Norte":                "_i5tst4lPDJ5oTSW4",      # Agro Norte (La Libertad, etc)
         "Pisco":                         "_XgBrvIyMIWm5YzLP",      # Pisco
-        "Agrícola Santa Azul":           "_oTreAE2PwVfx82Ds",      # Lima costa (Barranca, Supe, Huaura, Huaral)
         "Ninguno (Coyuntura Nacional)":  "_pM02KT2QspbdR8os",      # Coyuntura Nacional
     }
     
@@ -256,10 +255,6 @@ class Config:
         "GiddingsBerriesPeru": "Clientes Norte",  # GIDDINGS (FB)
         "100083411587501": "Clientes Norte",  # TALSA (FB)
         "westfaliafruitperu": "Clientes Norte",  # WESTFALIA FRUIT (FB)
-        "juan.jironsanchez": "Agrícola Santa Azul",  # Juan Jiron Sanchez
-        "contrapoder.live": "Agrícola Santa Azul",  # Cuarto  Poder
-        "municiaplidaddistritaldesupe20192022": "Agrícola Santa Azul",  # Municipalidad de Supe
-        "MunicipalidadDeBarranca": "Agrícola Santa Azul",  # Municipalidad Provincial de Barranca
         "PiscoNoticiass": "Pisco",  # PISCO Noticias
         "PiscoteInforma": "Pisco",  # Pisco te Informa
         "plusnoticias.pe": "Pisco",  # Plus Noticias Pisco Page
@@ -319,7 +314,6 @@ class Config:
         "Bechtel / Newmont",
         "Clientes Sur",
         "Clientes Norte",
-        "Agrícola Santa Azul",
         "Pisco",
         "Ninguno (Coyuntura Nacional)",
     ]
@@ -394,7 +388,6 @@ class Config:
         "SunFruits",
         "Vanguard",
         "Uvica",
-        "Agrícola Santa Azul",
     ]
 
     # ─────────────────────────────────────────────
@@ -429,10 +422,9 @@ class Config:
         # Agroindustria Norte / Lima costa
         "LA LIBERTAD":      ["Clientes Norte"],
  
-        "LIMA BARRANCA":    ["Agrícola Santa Azul", "Agrícola Huarmey"],
-        "LIMA SUPE":        ["Agrícola Santa Azul"],
-        "LIMA HUAURA":      ["Agrícola Santa Azul"],
-        "LIMA HUARAL":      ["Agrícola Santa Azul"],  # ⭐ Sincronizado con classifier.py PROVINCIA_TO_CLIENT
+        # Barranca/Paramonga es UGT Valle Fortaleza de Antamina. Antes iba a
+        # un cliente agro que se eliminó del sistema.
+        "LIMA BARRANCA":    ["Antamina"],
         "ANCASH HUARMEY":   ["Agrícola Huarmey"],
         # Nacional
         "NACIONAL":         ["Ninguno (Coyuntura Nacional)"],
@@ -447,7 +439,6 @@ class Config:
         "Bechtel / Newmont":                "Bechtel / Newmont",
         "Clientes Sur":                     "Clientes Sur",
         "Clientes Norte":                   "Clientes Norte",
-        "Agrícola Santa Azul":              "Agricola Santa Azul",
         "Agrícola Huarmey":                 "Antamina",
         "Agrícola 3P":                      "Clientes Norte",
         "Agrícola Chapi":                   "Clientes Sur",
@@ -558,7 +549,7 @@ class Config:
             "PALPA": ["PALPA", "LLIPATA", "RIO GRANDE", "SANTA CRUZ", "TIBILLO"],
             "PISCO": ["PISCO", "HUANCANO", "HUMAY", "INDEPENDENCIA", "PARACAS", "SAN ANDRES", "SAN CLEMENTE", "TUPAC AMARU INCA"],
         },
-        # LIMA — 10 provincias (BARRANCA/SUPE/HUAURA/HUARAL: Agrícola Santa Azul; el resto: IGNORAR)
+        # LIMA — 10 provincias (solo BARRANCA sigue activa, via Antamina; el resto: IGNORAR)
         "LIMA": {
             "LIMA": ["LIMA", "ANCON", "ATE", "BARRANCO", "BREÑA", "CARABAYLLO", "CHACLACAYO", "CHORRILLOS", "CIENEGUILLA", "COMAS", "EL AGUSTINO", "INDEPENDENCIA", "JESUS MARIA", "LA MOLINA", "LA VICTORIA", "LINCE", "LOS OLIVOS", "LURIGANCHO", "LURIN", "MAGDALENA DEL MAR", "MIRAFLORES", "PACHACAMAC", "PUCUSANA", "PUEBLO LIBRE", "PUENTE PIEDRA", "PUNTA HERMOSA", "PUNTA NEGRA", "RIMAC", "SAN BARTOLO", "SAN BORJA", "SAN ISIDRO", "SAN JUAN DE LURIGANCHO", "SAN JUAN DE MIRAFLORES", "SAN LUIS", "SAN MARTIN DE PORRES", "SAN MIGUEL", "SANTA ANITA", "SANTA MARIA DEL MAR", "SANTA ROSA", "SANTIAGO DE SURCO", "SURQUILLO", "VILLA EL SALVADOR", "VILLA MARIA DEL TRIUNFO"],
             "BARRANCA": ["BARRANCA", "PARAMONGA", "PATIVILCA", "SUPE", "SUPE PUERTO"],
@@ -587,11 +578,16 @@ class Config:
         "LIMA",      # Solo capital
     ]
     
-    # Subcategorías que SÍ se envían a NACIONAL (filtro de política)
+    # Categorías que SÍ se envían a NACIONAL.
+    # El alcance temático fino (qué ministerios, qué temas) se define en
+    # REGLA 7 del prompt; esta lista es solo la compuerta dura que aplica
+    # main.py:_should_send_to_nacional() DESPUÉS de clasificar.
     NACIONAL_ALLOWED_CATEGORIES = [
-        "Coyuntura Politica",
-        "Coyuntura Social",
-        "Protestas, Paros y Bloqueos",
+        "Coyuntura Politica",           # presidenta, leyes, elecciones, alcaldes, Mininter
+        "Coyuntura Social",             # conflictos sociales de alcance nacional
+        "Protestas, Paros y Bloqueos",  # protestas nacionales, paros, huelgas
+        "Economia-Desarrollo",          # MEF, economía nacional, MINEM (minas y energía)
+        "Agro-Agua-Medioambiente",      # MIDAGRI, política agraria nacional
     ]
     
     # Nivel mínimo para NACIONAL (INFO, ALRT y CRIT pasan)

@@ -4,9 +4,9 @@ echo   ALERTAS PROTECTA - Detener Sistema
 echo ========================================
 echo.
 
-REM Detener bridge buscando el PID que escucha en puerto 3001
-echo Deteniendo WhatsApp Bridge (puerto 3001)...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3001 " ^| findstr "LISTENING"') do (
+REM Detener bridge buscando el PID que escucha en puerto 3000
+echo Deteniendo WhatsApp Bridge (puerto 3000)...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000 " ^| findstr "LISTENING"') do (
     taskkill /F /PID %%a >nul 2>&1
     echo   Bridge detenido ^(PID %%a^).
 )

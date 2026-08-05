@@ -22,7 +22,17 @@ class WhatsAppSender:
         self._twilio_client = None
 
     # ─────────────────────────────────────────────
-    def send(self, group_name: str, message: str, image_url: str = "") -> bool:
+    def send(self, group_name: str, message: str, image_url: str = "") -> bool | None:
+        """Envía un mensaje. Resultado de tres estados:
+
+            True  → entregado y confirmado por el bridge.
+            False → NO entregado, con certeza (el bridge respondió que no
+                    pudo, o ni siquiera se le pudo abrir conexión).
+                    Solo en este caso es seguro reintentar.
+            None  → desenlace desconocido (timeout o error inesperado). El
+                    bridge pudo haber entregado el mensaje igualmente, así
+                    que reintentar produciría un duplicado en el grupo.
+        """
         if self.provider == "simulate":
             return self._send_simulate(group_name, message, image_url)
         elif self.provider == "bridge":
@@ -36,7 +46,7 @@ class WhatsAppSender:
     # Envía directo a grupos reales de WhatsApp
     # El bridge debe estar corriendo: node server.js
     # ─────────────────────────────────────────────
-    def _send_bridge(self, group_name: str, message: str, image_url: str = "") -> bool:
+    def _send_bridge(self, group_name: str, message: str, image_url: str = "") -> bool | None:
         """
         Llama al servidor Node.js local que tiene WhatsApp conectado.
         El bridge resuelve el nombre del grupo al chatId real.
@@ -68,24 +78,38 @@ class WhatsAppSender:
                 log.info(f"Bridge OK ({img_str}) → {data.get('group', group_name)}")
                 return True
             elif resp.status_code == 503:
+                # El bridge rechaza ANTES de tocar sendMessage — no se entregó nada.
                 log.error("Bridge: WhatsApp no conectado. Corre 'node server.js' y escanea el QR.")
                 return False
             elif resp.status_code == 404:
+                # Grupo desconocido, también rechazado antes de enviar.
                 log.error(f"Bridge: grupo '{group_name}' no encontrado. {resp.json().get('hint','')}")
                 return False
             else:
-                log.error(f"Bridge error {resp.status_code}: {resp.text[:200]}")
-                return False
+                # 500 = sendMessage lanzó excepción. Pudo fallar antes o DESPUÉS
+                # de que WhatsApp aceptara el mensaje: desenlace no confirmable.
+                log.error(f"Bridge error {resp.status_code} (sin confirmar): {resp.text[:200]}")
+                return None
 
         except requests.exceptions.ConnectionError:
+            # Nunca se abrió la conexión: el mensaje no salió.
             log.error(
                 f"No se puede conectar al bridge en {bridge_url}. "
                 f"Asegurate de que 'node server.js' este corriendo."
             )
             return False
+        except requests.exceptions.Timeout:
+            # El bridge tardó más de 90s. Enviar una imagen a WhatsApp puede
+            # superar ese margen: lo más probable es que SÍ se haya entregado.
+            # Reintentar aquí es exactamente lo que duplica los mensajes.
+            log.warning(
+                f"Bridge no respondió en 90s para '{group_name}'. "
+                f"Se asume entregado — no se reintenta para evitar duplicado."
+            )
+            return None
         except Exception as e:
-            log.error(f"Bridge excepcion: {e}")
-            return False
+            log.error(f"Bridge excepcion (sin confirmar): {e}")
+            return None
 
     # ─────────────────────────────────────────────
     # MODO SIMULACIÓN

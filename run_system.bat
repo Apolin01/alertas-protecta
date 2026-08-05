@@ -19,7 +19,7 @@ cd /d "%~dp0"
 
 REM Cerrar instancias previas del bridge si existieran
 echo Cerrando instancias previas en puerto 3000...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3001 " ^| findstr "LISTENING"') do (
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000 " ^| findstr "LISTENING"') do (
     taskkill /F /PID %%a >nul 2>&1
 )
 
