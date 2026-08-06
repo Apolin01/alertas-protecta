@@ -308,6 +308,19 @@ HOMICIDIO_AFTERMATH_TERMS = (
     "EXIGEN JUSTICIA", "EXIGIENDO JUSTICIA",
 )
 
+# Seguimiento de un fallecimiento que NO es el hecho en si: un vocero que se
+# pronuncia, una autoridad que da declaraciones, o la reconstruccion de los
+# hechos. El hecho ya se reporto en su momento; esto es cobertura posterior
+# sin valor operacional → IGNORAR. Complementa HOMICIDIO_AFTERMATH_TERMS, que
+# solo actua cuando la alerta viene etiquetada como HOMICIDIO.
+PRONUNCIAMIENTO_TERMS = (
+    "SE PRONUNCIA", "SE PRONUNCIO", "PRONUNCIAMIENTO", "SE REFIRIO",
+    "BRINDO DECLARACIONES", "DIO DECLARACIONES", "DECLARACIONES SOBRE",
+    "RECONSTRUCCION", "RECONSTRUCCIÓN", "RECONSTRUYEN",
+    "INFORMO SOBRE EL CASO", "SE DIRIGIO A LA PRENSA", "CONFERENCIA DE PRENSA",
+    "ACLARO SOBRE", "DESCARTO QUE",
+)
+
 # Términos de abuso/violencia sexual — SIEMPRE fuera de alcance (ver REGLA 10),
 # incluso si aparecen junto a un delito que normalmente SI se considera (ej.
 # "robo y abuso a menores"): la presencia de abuso/violacion saca la noticia
@@ -888,6 +901,26 @@ class AlertClassifier:
             ):
                 log.info(
                     f"Filtro homicidio-aftermath: '{alert.get('titulo')}' → IGNORAR"
+                )
+                alert["nivel"] = "IGNORAR"
+
+            # Filtro duro: pronunciamiento o reconstruccion de los hechos sobre un
+            # fallecimiento → IGNORAR en cualquier nivel. No es el hecho: es un
+            # vocero hablando de algo que ya paso. A diferencia del filtro
+            # aftermath de arriba, no exige que venga etiquetado como HOMICIDIO.
+            if any(
+                t in texto_completo or t in subcateg or t in kws_upper
+                for t in PRONUNCIAMIENTO_TERMS
+            ) and (
+                "HOMICID" in (subcateg + " " + " ".join(kws_upper))
+                or any(
+                    t in texto_completo or t in subcateg or t in kws_upper
+                    for t in MUERTE_TERMS
+                )
+            ):
+                log.info(
+                    f"Filtro pronunciamiento/reconstruccion: "
+                    f"'{alert.get('titulo')}' → IGNORAR"
                 )
                 alert["nivel"] = "IGNORAR"
 

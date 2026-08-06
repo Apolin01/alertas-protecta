@@ -347,6 +347,14 @@ NIVELES:
   El hecho ya paso y hay respuesta institucional en marcha; no es riesgo activo.
     - "Trabajador muere en mina Magistral" → CRIT (el hecho)
     - "Fiscalia investiga fallecimiento de trabajador en mina Magistral" → ALRT
+  ⚠️ PRONUNCIAMIENTO O RECONSTRUCCION SOBRE UN FALLECIMIENTO → IGNORAR (no ALRT).
+  Cuando la noticia es que una autoridad SE PRONUNCIA, da declaraciones o
+  participa en la RECONSTRUCCION DE LOS HECHOS de una muerte, no hay hecho nuevo:
+  es cobertura posterior. Sale del sistema por completo.
+    - "Comandante PNP se pronuncia sobre el homicidio de Franco Lujerio durante
+       la reconstruccion de los hechos" → IGNORAR
+    - "Fiscal brinda declaraciones sobre el crimen de la joven" → IGNORAR
+    - "Reconstruyen los hechos del homicidio en Huarmey" → IGNORAR
 - ALRT: accidentes en vias (incluye fallecidos por accidente, ver REGLA 10), huaicos, derrumbes, cortes de via, huelgas, incendios, robos a empresas, protestas, detencion de dirigentes, detenciones por los delitos de la REGLA 10, trafico de terrenos / traficantes de terrenos / usurpacion o invasion de terrenos / venta irregular de lotes (aunque la noticia se enfoque en un funcionario o excandidato político, el trafico de terrenos es un riesgo social para zonas agricolas/operativas cercanas).
   EJEMPLO ALRT POR TRAFICO DE TERRENOS: "Exalcalde habria entregado titulos de propiedad a traficantes de terrenos en Medio Mundo" → ALRT (no INFO), agregar "TraficoDeTerrenos" o similar a palabras_clave.
 - INFO: inversiones, avances de obra o inauguraciones DE LA EMPRESA CLIENTE (proyectos propios, responsabilidad social — ver lista de REGLA 9), reuniones con comunidades, produccion positiva, acuerdos, proyectos, politica regional, politica nacional/proceso electoral (resultados ONPE/JNE, declaraciones de candidatos, conteo de actas, votos por departamento, segunda vuelta presidencial) → SIEMPRE "Ninguno (Coyuntura Nacional)" (departamento=NACIONAL), sin importar si se menciona el nombre de un departamento dentro del conteo de votos (ver REGLA 7b).
