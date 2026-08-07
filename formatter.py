@@ -167,12 +167,6 @@ def _normalize_ubication(dept: str, prov: str, dist: str, config=None) -> tuple:
 
 class AlertFormatter:
 
-    # Servicios de acortado, en orden de preferencia. clck.ru (Yandex) probo
-    # ser el mas confiable (5/5 en pruebas, incluso con URLs largas de
-    # Facebook) — redirige en 2 saltos automaticos (clck.ru -> sba.yandex.ru
-    # -> destino) sin ninguna pagina visible al usuario. da.gd/is.gd quedan
-    # como respaldo por si clck.ru falla (da.gd nos bloqueo por volumen antes,
-    # is.gd fallo intermitentemente) — un solo servicio caido no debe dejar
     # todos los links sin acortar.
     _SHORTENERS = (
         ("clck.ru", "https://clck.ru/--", "url"),
@@ -201,12 +195,7 @@ class AlertFormatter:
         shortener_token = getattr(config, "SHORTENER_TOKEN", "") if config else ""
         fallos = []
         if shortener_url and shortener_token:
-            # El worker propio responde normalmente en 1.5-2s (mas lento de
-            # lo esperado para un Cloudflare Worker) — con timeout=5 y bajo
-            # carga real (varias alertas seguidas + llamadas a OpenAI/imagenes
-            # al mismo tiempo) alcanzaba a vencer y caia al respaldo. Se sube
-            # a 10s y 3 intentos para que un pico de lentitud puntual no lo
-            # tire a clck.ru/da.gd/is.gd.
+
             for intento in range(3):
                 try:
                     resp = requests.post(

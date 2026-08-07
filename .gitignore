@@ -3,10 +3,9 @@ __pycache__/
 *.pyc
 *.log
 *.db
-alertas.log
-credentials.json
 .venv/
 venv/
+credentials.json
 whatsapp_bridge/.wwebjs_auth/
 whatsapp_bridge/.wwebjs_cache/
 whatsapp_bridge/node_modules/
@@ -14,3 +13,5 @@ start_alertas.bat
 BD_Matriz.xlsx
 cookies.txt
 fb_session/
+completions_usage_2026-07-24_2026-08-03.json
+cost_2026-07-24_2026-08-03.json

@@ -1,21 +1,4 @@
-"""
-deduplicator.py — Evita enviar la misma noticia dos veces.
-
-Tres niveles de deduplicacion:
-  1. Por URL exacta del post (tabla 'processed')
-  
-  2. Por contenido exacto — si dos posts hablan del mismo evento
-     basándose en: departamento + provincia + subcategoria + palabras_clave
-     
-  3. Por similitud de TÍTULO — El más importante para evitar duplicados
-     de diferentes fuentes en el mismo bundle. Usa:
-     - Similitud Jaccard >= 60% en títulos
-     - Levenshtein distance en títulos normalizados
-     - Ventana de 12 horas por departamento
-     
-  4. Por similitud de DESCRIPCIÓN — Si títulos no matchean pero contenido
-     es muy similar (>= 70% Jaccard en descripción)
-"""
+"""deduplicator.py — Evita enviar la misma noticia dos veces."""
 
 import os
 import re
@@ -23,6 +6,7 @@ import hashlib
 import logging
 import unicodedata
 import psycopg2
+from collections import Counter
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from functools import wraps
@@ -30,21 +14,49 @@ from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 log = logging.getLogger(__name__)
 
-# Umbrales de similitud — ¡MUCHO MÁS AGRESIVOS para capturar variaciones!
-JACCARD_THRESHOLD_TITULO = 0.35       # ⭐ REDUCIDO: 0.50 → 0.35 (captura "Disparo" vs "Homicidio" + mismo lugar)
-JACCARD_THRESHOLD_CONTENIDO = 0.40    # ⭐ REDUCIDO: 0.55 → 0.40 (más sensible a parafraseos)
-LEVENSHTEIN_THRESHOLD = 0.60          # ⭐ REDUCIDO: 0.65 → 0.60 (Nuevo Chimbote ≈ Chimbote)
-SIMILITUD_EVENTO_MIN = 0.55           # Para detección semántica de mismo evento
+_dedup_stats = Counter()
 
-# Ventanas de búsqueda
-DEDUP_WINDOW_HOURS = 24               # ⭐ AMPLIADO: 12 → 24h (no repita en todo el día)
-DEDUP_SAME_BUNDLE_HOURS = 0.5         # 30 MINUTOS - mismo bundle = mismo evento
-DEDUP_SAME_SOURCE_HOURS = 6           # Ventana para misma fuente
-DEDUP_SAME_LOCATION_HOURS = 0.25      # 15 minutos - mismo depto + prov = probablemente dup
-DEDUP_SAME_PROVINCIA_HOURS = 24       # ⭐ AMPLIADO: 2 → 24h (ver NIVEL 6 Caso B — antes no alcanzaba
-                                       # a cubrir reposts de la misma noticia horas despues)
 
-# Stopwords español + palabras frecuentes en titulares
+def log_dedup_stats():
+    """Loguea (y resetea) el resumen de NIVELes de dedup del ciclo."""
+    if not _dedup_stats or _dedup_stats.get("total_checks", 0) == 0:
+        _dedup_stats.clear()
+        return
+
+    total = _dedup_stats.pop("total_checks", 0)
+    llamadas_ia = _dedup_stats.pop("NIVEL 6 llamadas IA", 0)
+    deterministas = sum(v for k, v in _dedup_stats.items() if k != "NIVEL 6")
+    ia_duplicados = _dedup_stats.get("NIVEL 6", 0)
+
+    resumen = ", ".join(f"{k}={v}" for k, v in sorted(_dedup_stats.items())) or "sin duplicados"
+    log.info(
+        f"[Dedup] Resumen del ciclo: {total} chequeos, {llamadas_ia} llamadas a IA "
+        f"(NIVEL 6) — {resumen}"
+    )
+
+    if llamadas_ia > 0 and llamadas_ia >= max(deterministas, 1):
+        log.warning(
+            f"[Dedup] ⚠️ Consumo excesivo de IA en dedup: {llamadas_ia} llamadas a OpenAI "
+            f"en NIVEL 6 (fallback) frente a solo {deterministas} duplicados atrapados por "
+            f"los niveles gratis (0-5, {ia_duplicados} de ellos confirmados como duplicado "
+            f"por la IA). Cada llamada de NIVEL 6 cuesta tokens — revisar "
+            f"JACCARD_THRESHOLD_TITULO / OVERLAP_THRESHOLD_TITULO si esto persiste."
+        )
+
+    _dedup_stats.clear()
+
+JACCARD_THRESHOLD_TITULO = 0.35
+JACCARD_THRESHOLD_CONTENIDO = 0.40
+LEVENSHTEIN_THRESHOLD = 0.60
+SIMILITUD_EVENTO_MIN = 0.55
+OVERLAP_THRESHOLD_TITULO = 0.65
+
+DEDUP_WINDOW_HOURS = 24
+DEDUP_SAME_BUNDLE_HOURS = 0.5
+DEDUP_SAME_SOURCE_HOURS = 6
+DEDUP_SAME_LOCATION_HOURS = 0.25
+DEDUP_SAME_PROVINCIA_HOURS = 24
+
 _STOPWORDS_ES = {
     "el","la","los","las","de","del","en","a","y","o","u","un","una","unos","unas",
     "que","se","por","con","para","su","sus","es","al","lo","como","mas","pero","le",
@@ -55,7 +67,6 @@ _STOPWORDS_ES = {
     "hasta","aun","aun","tan","ahi","alli","aqui","yo","tu","el","ella","nos",
 }
 
-# Palabras clave que indican un EVENTO (para fingerprinting mejorado)
 _EVENT_KEYWORDS = {
     "muerta", "muerto", "muerte", "homicidio", "asesinato", "crimen",
     "accidente", "choque", "colisión", "disparo", "tiroteo", "balazo",
@@ -70,7 +81,6 @@ _EVENT_KEYWORDS = {
     "corte", "vía", "carretera", "emergencia", "estado de emergencia",
 }
 
-# Mapeo de ubicaciones normalizadas (variaciones → forma canónica)
 _LOCATION_NORMALIZE = {
     "nuevochimbote": "chimbote",
     "nuevo chimbote": "chimbote",
@@ -82,19 +92,16 @@ _LOCATION_NORMALIZE = {
 
 
 def _strip_accents(s: str) -> str:
-    """Remueve tildes y diacríticos."""
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
 
 
 def _normalize_text(s: str) -> str:
-    """Normaliza texto: lowercase, sin tildes, solo letras y números."""
     s = _strip_accents(s.lower())
-    s = re.sub(r'[^a-z0-9\s]', ' ', s)  # Solo letras, números, espacios
+    s = re.sub(r'[^a-z0-9\s]', ' ', s)
     return re.sub(r'\s+', ' ', s).strip()
 
 
 def _words_set(text: str) -> set:
-    """Tokeniza: lowercase, sin tildes, solo letras, sin stopwords, longitud >= 3."""
     if not text:
         return set()
     norm = _strip_accents(text.lower())
@@ -103,7 +110,6 @@ def _words_set(text: str) -> set:
 
 
 def _jaccard(a: set, b: set) -> float:
-    """Calcula similitud Jaccard entre dos sets de palabras."""
     if not a or not b:
         return 0.0
     inter = len(a & b)
@@ -111,18 +117,20 @@ def _jaccard(a: set, b: set) -> float:
     return inter / union if union else 0.0
 
 
+def _overlap_coef(a: set, b: set) -> float:
+    """Intersección / tamaño del set más chico — a diferencia de Jaccard, no se diluye cuando un set es mucho más grande que el otro."""
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    smaller = min(len(a), len(b))
+    return inter / smaller if smaller else 0.0
+
+
 def _levenshtein_ratio(s1: str, s2: str) -> float:
-    """
-    Calcula similitud usando SequenceMatcher (más rápido que Levenshtein puro).
-    Retorna 0.0 a 1.0 donde 1.0 es idéntico.
-    """
     return SequenceMatcher(None, s1, s2).ratio()
 
+
 def _normalize_url(url: str) -> str:
-    """
-    Normaliza URLs para evitar duplicados con parámetros distintos.
-    Elimina utm, fbclid, mibextid, ref, locale y slash final.
-    """
     if not url:
         return ""
 
@@ -147,24 +155,14 @@ def _normalize_url(url: str) -> str:
 
 
 def _ai_are_same_event(titulo1: str, titulo2: str, desc1: str, desc2: str) -> bool:
-    """
-    NIVEL 6 FALLBACK: Usa IA para detectar si dos alertas hablan del MISMO EVENTO.
-    
-    Casos de uso:
-    - "Disparo en Chimbote" vs "Homicidio en Chimbote" (mismo evento, diferente nivel)
-    - "Empresario muere" vs "Hombre fallece" (parafraseo semántico)
-    - "Canon minero aumenta" vs "Minería crecimiento" (mismo tema, diferentes palabras)
-    
-    IMPORTANTE: Solo se llama cuando otros niveles fallan pero hay similitud media.
-    Es una RED FINAL para no dejar escapar duplicados.
-    """
+    """NIVEL 6: le pregunta a la IA si dos alertas hablan del mismo evento."""
     try:
         import requests
         from config import Config
-        
+
         config = Config()
         ai_provider = getattr(config, "AI_PROVIDER", "openai").lower()
-        
+
         prompt = f"""Analiza estos dos titulares/resumenes de noticias, publicados con pocos minutos de diferencia.
 ¿Son la MISMA noticia o pertenecen a una MISMA historia EN DESARROLLO?
 Responde "SI" si:
@@ -182,13 +180,13 @@ TITULO 2: {titulo2[:100]}
 {desc2[:80]}
 
 Respuesta:"""
-        
-        # Usar OpenAI como fallback predeterminado
+
         if ai_provider == "openai":
             key = config.OPENAI_API_KEY
             if not key:
                 return False
-            
+
+            _dedup_stats["NIVEL 6 llamadas IA"] += 1
             response = requests.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},
@@ -200,73 +198,58 @@ Respuesta:"""
                 },
                 timeout=5
             )
-            
+
             if response.status_code == 200:
                 content = response.json()["choices"][0]["message"]["content"].strip().upper()
-                # Comparación EXACTA: evita falsos positivos como "SIN DUDA NO" matcheando "SI"
                 first_token = re.split(r'[\s.,;:!?]+', content, maxsplit=1)[0]
                 if first_token == "SI":
                     log.info(f"[Dedup] ⚡ NIVEL 6 (IA Semántica) → DUPLICADO DETECTADO")
                     return True
             return False
-        
-        # Otros providers podrían añadirse aquí si es necesario
+
         return False
-    
+
     except Exception as e:
         log.warning(f"[Dedup] IA fallback no disponible: {e}")
         return False
 
 
 def _extract_event_signature(text: str) -> str:
-    """
-    Extrae firma de evento MEJORADA: ubicación normalizada + números + palabras clave de evento.
-    Ej: "Canon minero 576.4M Cajamarca" → "cajamarca_mineria_576"
-         "Disparo Nuevo Chimbote" → "chimbote_arma"
-         "Homicidio Chimbote" → "chimbote_muerte"
-    
-    Esto ayuda a detectar el MISMO EVENTO reportado de forma diferente.
-    """
+    """Firma de evento: ubicación + palabra clave de evento + número, para detectar el mismo hecho narrado distinto."""
     if not text:
         return ""
-    
-    # Normalizar
+
     text_norm = _strip_accents(text.lower())
-    
-    # Extraer ubicación (palabras de 4+ chars al inicio, o palabras conocidas de ciudades)
+
     location_words = []
     for word in text_norm.split():
         word_clean = re.sub(r'[^a-z]', '', word)
         if len(word_clean) >= 4 and word_clean not in _STOPWORDS_ES:
-            # Aplicar mapeo de normalización
             normalized = _LOCATION_NORMALIZE.get(word_clean, word_clean)
             if normalized not in location_words:
                 location_words.append(normalized)
-            if len(location_words) >= 2:  # Max 2 ubicaciones
+            if len(location_words) >= 2:
                 break
-    
+
     location_sig = "_".join(location_words[:2]) if location_words else ""
-    
-    # Extraer palabras clave de EVENTO (muertes, accidentes, etc)
+
     event_keyword = ""
     for keyword in _EVENT_KEYWORDS:
         if keyword in text_norm:
             event_keyword = keyword
             break
-    
-    # Extraer números significativos (cantidades, dinero)
+
     numbers = re.findall(r'\d+[.,]?\d*', text)
     number_sig = numbers[0] if numbers else ""
-    
-    # Construir firma
+
     sig_parts = []
     if location_sig:
         sig_parts.append(location_sig)
     if event_keyword:
-        sig_parts.append(event_keyword[:8])  # Max 8 chars
+        sig_parts.append(event_keyword[:8])
     if number_sig:
-        sig_parts.append(number_sig.replace('.', '').replace(',', '')[:6])  # Max 6 chars
-    
+        sig_parts.append(number_sig.replace('.', '').replace(',', '')[:6])
+
     sig = "_".join(sig_parts)
     return sig[:120] if sig else ""
 
@@ -287,13 +270,7 @@ def _get_conn():
 
 
 def _reconnect_and_retry(method):
-    """
-    Reintenta el método UNA vez si la conexión a Postgres se cae a mitad de
-    la ejecución (ej. servidor cierra conexiones idle — común en Neon/Supabase).
-    _cursor() ya reconecta al INICIO de cada método, pero un método largo hace
-    varias queries seguidas con el mismo cursor; si la conexión muere entre
-    medio, sin esto la excepción se propaga y tumba el proceso (run_forever).
-    """
+    """Reintenta el método una vez si la conexión a Postgres se cae a mitad de ejecución."""
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         try:
@@ -314,8 +291,10 @@ class Deduplicator:
         self.conn = _get_conn()
         self._init_db()
 
+    def log_dedup_stats(self):
+        log_dedup_stats()
+
     def _cursor(self):
-        """Retorna cursor reconectando si la conexión cayó."""
         try:
             self.conn.cursor().execute("SELECT 1")
         except Exception:
@@ -353,15 +332,11 @@ class Deduplicator:
                 UNIQUE(titulo_hash, departamento)
             )
         """)
-        # Agregar nuevas columnas si no existen
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS titulo_hash TEXT")
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS descripcion_norm TEXT")
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS provincia TEXT")
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS url TEXT")
 
-        # Asegurar UNIQUE constraint — CREATE TABLE IF NOT EXISTS no modifica tablas ya existentes,
-        # por lo que la constraint puede faltar si la tabla se creó con una versión anterior.
-        # Sin ella, ON CONFLICT falla y mark_alert_sent() nunca guarda nada → dedup ciego.
         cur.execute("""
             DELETE FROM sent_alerts
             WHERE titulo_hash IS NOT NULL
@@ -388,7 +363,6 @@ class Deduplicator:
             END $$;
         """)
 
-        # Índices para búsquedas rápidas
         cur.execute("CREATE INDEX IF NOT EXISTS idx_dept_sent ON sent_alerts (departamento, sent_at)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_titulo_hash ON sent_alerts (titulo_hash)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cliente_sent ON sent_alerts (cliente, sent_at)")
@@ -397,36 +371,26 @@ class Deduplicator:
         self._cleanup_old()
 
     def _url_hash(self, post: dict) -> str:
-        """Hash de la URL normalizada para evitar duplicados entre ciclos."""
         key = _normalize_url(post.get("url") or "") or _normalize_text(post.get("text", ""))[:300]
         return hashlib.md5(key.encode("utf-8")).hexdigest()
 
     def _content_hash(self, alert: dict) -> str:
-        """
-        Hash exacto basado en estructura clasificada.
-        Identifica el mismo evento cuando la IA mantiene categorías estables.
-        """
         dept = (alert.get("departamento") or "").upper().strip()
         prov = (alert.get("provincia")    or "").upper().strip()
         sub  = (alert.get("subcategoria") or "").upper().strip()
         kws  = sorted(str(k).upper().strip() for k in (alert.get("palabras_clave") or []))
         key  = f"{dept}|{prov}|{sub}|{'-'.join(kws)}"
         return hashlib.md5(key.encode("utf-8")).hexdigest()
-    
+
     def _titulo_hash(self, titulo: str) -> str:
-        """
-        Hash basado en el título normalizado.
-        Dos títulos muy similares producen el mismo hash.
-        """
-        norm = _normalize_text(titulo)[:100]  # Primeras 100 chars normalizadas
+        norm = _normalize_text(titulo)[:100]
         return hashlib.md5(norm.encode("utf-8")).hexdigest()
 
     # ─────────────────────────────────────────────
-    # DEDUP DE POSTS (Nivel 1 — por URL)
+    # DEDUP DE POSTS
     # ─────────────────────────────────────────────
     @_reconnect_and_retry
     def already_processed(self, post: dict) -> bool:
-        """¿Esta URL ya fue procesada?"""
         h = self._url_hash(post)
         cur = self._cursor()
         cur.execute("SELECT 1 FROM processed WHERE hash = %s", (h,))
@@ -434,7 +398,6 @@ class Deduplicator:
 
     @_reconnect_and_retry
     def mark_processed(self, post: dict):
-        """Marca una URL como procesada."""
         h = self._url_hash(post)
         try:
             cur = self._cursor()
@@ -444,33 +407,20 @@ class Deduplicator:
             )
             self.conn.commit()
         except (psycopg2.OperationalError, psycopg2.InterfaceError):
-            # Conexión caída: no intentar rollback (fallaría también), dejar
-            # que el decorador reconecte y reintente el método completo.
             raise
         except Exception as e:
             self.conn.rollback()
             log.error(f"Error en dedup BD: {e}")
 
     # ─────────────────────────────────────────────
-    # DEDUP DE ALERTAS (Nivel 2,3,4 — por contenido)
+    # DEDUP DE ALERTAS
     # ─────────────────────────────────────────────
     @_reconnect_and_retry
     def is_duplicate_alert(self, alert: dict, window_hours: int = DEDUP_WINDOW_HOURS) -> bool:
-        """
-        Retorna True si ya se envió una alerta similar en las últimas N horas.
+        """Recorre NIVEL 0 → 6 en orden de costo; corta en el primero que confirme duplicado."""
+        _dedup_stats["total_checks"] += 1
 
-        SIETE niveles de verificación (en orden de rapidez):
-          0. URL exacta (si existe) — SUPER RÁPIDO
-          0.5. Content hash exacto — MÁS RÁPIDO
-          1. Firma de evento (números + ubicaciones clave)
-          2. Hash exacto de contenido (clasificación + palabras clave)
-          2.5. ULTRA-AGRESIVO: Mismo dept/prov en 15 min
-          3/4. Similitud Jaccard de títulos
-          5. Similitud Jaccard de descripciones
-          6. IA Fallback para casos ambiguos
-        """
-        
-        # 🔴 NIVEL 0: URL EXACTA (si está disponible) — INSTANTÁNEO
+        # NIVEL 0: URL exacta
         url = alert.get("url", "").strip()
         if url:
             cur = self._cursor()
@@ -481,33 +431,34 @@ class Deduplicator:
             )
             if cur.fetchone():
                 log.info(f"[Dedup] ✓ NIVEL 0 (URL exacta) → DUPLICADO")
+                _dedup_stats["NIVEL 0"] += 1
                 return True
-        
-        # 🔵 NIVEL 0.5: CONTENT HASH EXACTO — SUPER RÁPIDO
+
+        # NIVEL 0.5: content hash exacto
         ch = self._content_hash(alert)
         cutoff = (datetime.now() - timedelta(hours=window_hours)).isoformat()
         cur = self._cursor()
-        
+
         cur.execute(
             "SELECT 1 FROM sent_alerts WHERE content_hash = %s AND sent_at > %s LIMIT 1",
             (ch, cutoff)
         )
         if cur.fetchone():
             log.info(f"[Dedup] ✓ NIVEL 0.5 (Content Hash exacto) → DUPLICADO")
+            _dedup_stats["NIVEL 0.5"] += 1
             return True
-        
-        # 🟣 NIVEL 1: FIRMA DE EVENTO (números + ubicaciones)
+
+        # NIVEL 1: firma de evento (números + ubicaciones)
         titulo = alert.get("titulo", "").strip()
         desc = alert.get("resumen_whatsapp", "").strip()
         combined_text = f"{titulo} {desc}"
-        
+
         if len(combined_text) > 20:
             sig = _extract_event_signature(combined_text)
             if sig:
                 dept = (alert.get("departamento") or "").upper().strip()
                 if dept:
                     cur = self._cursor()
-                    # Ventana más corta para misma firma (1 hora)
                     cutoff = (datetime.now() - timedelta(hours=1)).isoformat()
                     cur.execute(
                         "SELECT resumen FROM sent_alerts WHERE departamento = %s AND sent_at > %s AND resumen IS NOT NULL",
@@ -518,15 +469,10 @@ class Deduplicator:
                             sig_existente = _extract_event_signature(f"{rec_resumen}")
                             if sig == sig_existente and sig:
                                 log.info(f"[Dedup] ✓ NIVEL 1 (Firma evento '{sig}') → DUPLICADO")
+                                _dedup_stats["NIVEL 1"] += 1
                                 return True
-        
-        # 🔴 NIVEL 2: (Eliminado - ya cubierto por NIVEL 0.5)
-        # El content_hash exacto ya se verifica en NIVEL 0.5 al inicio
-        
-        # ⚡ NIVEL 2.5: MISMO DEPARTAMENTO + PROVINCIA + SUBCATEGORIA EN 15 MIN
-        # Antes era solo dept+prov, lo cual marcaba como duplicado eventos DISTINTOS
-        # ocurridos en el mismo lugar (ej. robo y incendio en la misma provincia).
-        # Ahora requiere también misma subcategoria para evitar falsos positivos.
+
+        # NIVEL 2.5: mismo departamento + provincia + subcategoria en 15 min
         dept = (alert.get("departamento") or "").upper().strip()
         prov = (alert.get("provincia") or "").upper().strip()
         sub  = (alert.get("subcategoria") or "").upper().strip()
@@ -534,7 +480,6 @@ class Deduplicator:
         if dept and prov and sub:
             cutoff_agressive = (datetime.now() - timedelta(hours=DEDUP_SAME_LOCATION_HOURS)).isoformat()
 
-            # Búsqueda: mismo lugar + misma subcategoria en 15 minutos
             cur.execute(
                 """SELECT 1 FROM sent_alerts
                    WHERE departamento = %s AND provincia = %s
@@ -544,12 +489,13 @@ class Deduplicator:
             )
             if cur.fetchone():
                 log.info(f"[Dedup] ✓ NIVEL 2.5 (Mismo Lugar+Subcat {dept}/{prov}/{sub} en 15min) → DUPLICADO")
+                _dedup_stats["NIVEL 2.5"] += 1
                 return True
 
-        # 🟡 NIVEL 3: Hash de título (títulos casi idénticos)
+        # NIVEL 3: hash de título
         if titulo and len(titulo) > 10:
             th = self._titulo_hash(titulo)
-            
+
             if dept:
                 cur.execute(
                     "SELECT 1 FROM sent_alerts WHERE titulo_hash = %s AND departamento = %s AND sent_at > %s LIMIT 1",
@@ -557,13 +503,13 @@ class Deduplicator:
                 )
                 if cur.fetchone():
                     log.info(f"[Dedup] ✓ NIVEL 3 (Hash título) → DUPLICADO")
+                    _dedup_stats["NIVEL 3"] += 1
                     return True
 
-        # 🟠 NIVEL 4: Similitud Jaccard de TÍTULOS (>=50%)
-        # Solo se ejecuta si hay título suficiente Y dept. Si falta algo, salta al siguiente nivel.
+        # NIVEL 4: Jaccard / Overlap / Levenshtein de títulos
         if titulo and len(titulo) > 10 and dept:
             set_titulo_nuevo = _words_set(titulo)
-            if len(set_titulo_nuevo) >= 2:  # Reducido a 2 palabras (de 3)
+            if len(set_titulo_nuevo) >= 2:
                 cur.execute(
                     "SELECT DISTINCT titulo_norm FROM sent_alerts "
                     "WHERE departamento = %s AND sent_at > %s AND titulo_norm IS NOT NULL",
@@ -575,8 +521,8 @@ class Deduplicator:
                         continue
                     set_existente = set(titulo_norm.split())
                     score_jaccard = _jaccard(set_titulo_nuevo, set_existente)
+                    score_overlap = _overlap_coef(set_titulo_nuevo, set_existente)
 
-                    # También verificar similitud de strings directa (Levenshtein)
                     titulo_norm_completo = " ".join(titulo_norm.split())[:100]
                     titulo_nuevo_norm = _normalize_text(titulo)[:100]
                     score_leven = _levenshtein_ratio(titulo_nuevo_norm, titulo_norm_completo)
@@ -585,19 +531,27 @@ class Deduplicator:
                         log.info(
                             f"[Dedup] ✓ NIVEL 4 (Jaccard Título={score_jaccard:.2f}) → DUPLICADO"
                         )
+                        _dedup_stats["NIVEL 4"] += 1
+                        return True
+
+                    if score_overlap >= OVERLAP_THRESHOLD_TITULO:
+                        log.info(
+                            f"[Dedup] ✓ NIVEL 4 (Overlap Título={score_overlap:.2f}) → DUPLICADO"
+                        )
+                        _dedup_stats["NIVEL 4"] += 1
                         return True
 
                     if score_leven >= LEVENSHTEIN_THRESHOLD:
                         log.info(
                             f"[Dedup] ✓ NIVEL 4 (Levenshtein={score_leven:.2f}) → DUPLICADO"
                         )
+                        _dedup_stats["NIVEL 4"] += 1
                         return True
 
-        # 🔴 NIVEL 5: Similitud Jaccard de DESCRIPCIONES (>=55%)
-        # Solo se ejecuta si hay desc suficiente Y dept. Si falta algo, salta al NIVEL 6.
+        # NIVEL 5: Jaccard de descripciones
         if desc and len(desc) > 15 and dept:
             set_desc_nuevo = _words_set(desc)
-            if len(set_desc_nuevo) >= 3:  # Reducido a 3 palabras
+            if len(set_desc_nuevo) >= 3:
                 cur.execute(
                     "SELECT descripcion_norm FROM sent_alerts "
                     "WHERE departamento = %s AND sent_at > %s AND descripcion_norm IS NOT NULL",
@@ -614,26 +568,13 @@ class Deduplicator:
                         log.info(
                             f"[Dedup] ✓ NIVEL 5 (Jaccard DESC={score:.2f}) → DUPLICADO"
                         )
+                        _dedup_stats["NIVEL 5"] += 1
                         return True
-        
-        # ⚡ NIVEL 6: IA FALLBACK — Comparación semántica (último recurso)
-        # Caso A: similitud media-baja (0.15-0.35) en mismo departamento + toda la
-        #         ventana de dedup (24h) — títulos parecidos pero que no llegaron
-        #         al umbral exacto. Incidente real: la misma noticia ("entrega de
-        #         terreno para la División Policial de Pisco") se envió 3 veces en
-        #         ~15h porque cada repost tenía un título redactado muy distinto
-        #         (Jaccard bajo) y la ventana vieja de 6h no llegaba a cubrir el
-        #         lapso entre envíos — se amplió a 24h y se bajó el piso de banda
-        #         de 0.30 a 0.15 para no descartar reformulaciones muy distintas.
-        # Caso B: MISMA PROVINCIA en toda la ventana de dedup, sin importar el score —
-        #         distintas fuentes narran el MISMO EVENTO con palabras muy diferentes
-        #         (ej. "naufragio en Paracas" vs "búsqueda de pescadores" vs
-        #         "familiares buscan a Kenny Díaz" → los 3 son el mismo naufragio
-        #         en San Andrés, Pisco, pero comparten muy pocas palabras).
+
+        # NIVEL 6: fallback de IA (último recurso, único nivel que cuesta tokens)
         if titulo and desc and dept:
             set_t_new = _words_set(titulo)
 
-            # Caso A: mismo departamento, ventana completa de dedup (24h), similitud media-baja
             cutoff_ia = (datetime.now() - timedelta(hours=DEDUP_WINDOW_HOURS)).isoformat()
             cur.execute(
                 "SELECT titulo_norm, descripcion_norm FROM sent_alerts "
@@ -653,9 +594,9 @@ class Deduplicator:
                         desc[:150], desc_existente[:150] if desc_existente else ""
                     ):
                         log.info(f"[Dedup] ⚡ NIVEL 6 (IA Semántica, Jaccard={score_medio:.2f}) → DUPLICADO")
+                        _dedup_stats["NIVEL 6"] += 1
                         return True
 
-            # Caso B: misma provincia, ventana corta, cualquier score por debajo del umbral exacto
             if prov:
                 cutoff_prov = (datetime.now() - timedelta(hours=DEDUP_SAME_PROVINCIA_HOURS)).isoformat()
                 cur.execute(
@@ -670,53 +611,40 @@ class Deduplicator:
                     set_t_exist = set(titulo_existente.split())
                     score = _jaccard(set_t_new, set_t_exist)
                     if score >= JACCARD_THRESHOLD_TITULO:
-                        continue  # ya lo hubiera atrapado NIVEL 4
+                        continue
                     log.debug(f"[Dedup] Misma provincia {dept}/{prov} (Jaccard={score:.2f}): consultando IA")
                     if _ai_are_same_event(
                         titulo, titulo_existente,
                         desc[:150], desc_existente[:150] if desc_existente else ""
                     ):
                         log.info(f"[Dedup] ⚡ NIVEL 6 (IA Semántica, misma provincia {dept}/{prov}) → DUPLICADO")
+                        _dedup_stats["NIVEL 6"] += 1
                         return True
 
         return False
 
     @_reconnect_and_retry
     def mark_alert_sent(self, alert: dict):
-        """
-        Registra una alerta como enviada para futuras dedups.
-        
-        ⚠️ IMPORTANTE: 
-        - SOLO guarda si NO es duplicado (doble-check)
-        - Usa transacción atómica para evitar race conditions
-        - No guarda alertas con nivel IGNORAR
-        """
-        # No guardar alertas ignoradas
+        """Registra una alerta enviada, con doble-check de duplicado antes de guardar."""
         if alert.get("nivel") == "IGNORAR":
             return
-        
-        # Double-check: verificar UNA VEZ MÁS que no sea duplicado ANTES de guardar
+
         if self.is_duplicate_alert(alert):
             log.info(f"[Dedup] Rechazado: duplicado detectado en mark_alert_sent, NO se guarda")
             return
-        
+
         ch = self._content_hash(alert)
         titulo = alert.get("titulo", "").strip()
         desc = alert.get("resumen_whatsapp", "").strip()
         url = alert.get("url", "").strip()
-        
-        # Normalizar para búsquedas futuras
+
         titulo_words = " ".join(sorted(_words_set(titulo)))[:500] if titulo else ""
         desc_words = " ".join(sorted(_words_set(desc)))[:500] if desc else ""
         titulo_hash = self._titulo_hash(titulo) if titulo else None
-        
+
         try:
             cur = self._cursor()
 
-            # psycopg2 maneja transacciones implícitamente (autocommit=OFF).
-            # NO usar BEGIN/COMMIT manual — causa warnings y comportamiento indefinido.
-
-            # Verificación final antes de insertar (mismo bloque transaccional)
             if titulo_hash and alert.get("departamento"):
                 cur.execute(
                     "SELECT 1 FROM sent_alerts WHERE titulo_hash = %s AND departamento = %s LIMIT 1",
@@ -727,7 +655,6 @@ class Deduplicator:
                     self.conn.rollback()
                     return
 
-            # Insertar nuevo registro
             cur.execute(
                 """INSERT INTO sent_alerts
                    (content_hash, titulo_hash, titulo_norm, descripcion_norm,
@@ -769,20 +696,17 @@ class Deduplicator:
     # ─────────────────────────────────────────────
     @_reconnect_and_retry
     def _cleanup_old(self):
-        """Limpia registros antiguos para evitar tabla gigante."""
         cutoff = (datetime.now() - timedelta(days=7)).isoformat()
-        # Margen 2x sobre DEDUP_WINDOW_HOURS para que una alerta en el borde
-        # de la ventana no sea borrada justo antes del próximo chequeo.
         cutoff_alerts = (datetime.now() - timedelta(hours=DEDUP_WINDOW_HOURS * 2)).isoformat()
         cur = self._cursor()
-        
+
         cur.execute("DELETE FROM processed WHERE seen_at < %s", (cutoff,))
         count_processed = cur.rowcount
-        
+
         cur.execute("DELETE FROM sent_alerts WHERE sent_at < %s", (cutoff_alerts,))
         count_alerts = cur.rowcount
-        
+
         self.conn.commit()
-        
+
         if count_processed > 0 or count_alerts > 0:
             log.info(f"[Dedup] Limpieza: {count_processed} URLs, {count_alerts} alertas antiguas")
