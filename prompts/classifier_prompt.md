@@ -69,10 +69,11 @@ Preferentes (usar si aplica): DETENCION, HOMICIDIO, SEGURIDAD, AGRO, AGRICULTORE
 - Usar HOMICIDIO en lugar de ASESINATO. En homicidios NO incluir nombre de victimas.
 - Conflicto laboral: LABORAL + sindicato (SUTEP, CGTP, FETSA) o SUNAFIL si se menciona.
 - AGRO = agroindustria; AGRICULTORES = pequenos productores con dificultades economicas.
-- Si la noticia ocurre en zona del cliente o lo mencionan, incluir el cliente:
+⚠️ OBLIGATORIO — no opcional: si el texto NOMBRA a la empresa cliente (o su mina/proyecto/marca) por su nombre propio, ESA PALABRA SIEMPRE va como una de las 3 palabras_clave, sin excepcion, sin importar el nivel (CRIT/ALRT/INFO) ni si la noticia es positiva o negativa para la empresa:
   Mineria: ANTAMINA, YANACOCHA, NEWMONT, BECHTEL, CONGA.
   Agro Sur (solo ICA, NUNCA Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY-FARMS, SUN-FRUITS, VANGUARD, RVR, UVICA, CAMPOS-DEL-SUR, DON-LUIS, DON-RICARDO.
   Agro Norte (La Libertad/costa): CASA-GRANDE, DANPER, MISSION, HORTIFRUT, GREEN-PERU, HASS, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA, LAREDO, ADAS, CAMPO-ANDINO.
+  (Lista completa de nombres de empresa por cliente en REGLA 9 — mismo criterio ahi: nombrada explicitamente = siempre en palabras_clave.)
 - Abreviaciones si aparecen literalmente en el texto: CODEHICA, CNDDHH, SEDYS, FETSA, CAMPOSOL, SITECASA-CAMPOSOL, CNUL, CPUL-ICA, STCCI, SUTEP, CGTP, TUAGRAP.
 
 TITULO:
@@ -238,6 +239,21 @@ REGLA 4 — UBICACION MANDA, NO LA FUENTE. Lee el TEXTO y BUSCA MENCIONES GEOGR�
 
   LIMA — Provincias rurales a procesar: BARRANCA, SUPE, HUAURA, HUARAL.
   IGNORAR: Lima Metropolitana, Callao, Lima sin provincia específica.
+
+  ⚠️ NOTICIAS DE OTROS PAISES (fuera del Peru): el NOMBRE DE LA PAGINA o un
+  HASHTAG con un lugar del Peru (ej. #NoticiasTrujillo, #Chimbote) NUNCA es
+  evidencia de ubicacion — es solo el nombre de la cuenta que publica. Si el
+  TEXTO describe un hecho ocurrido en otro pais (fuente extranjera, gentilicio
+  extranjero, institucion de otro pais como servicio geologico/policia/gobierno
+  de otro pais, o el hecho mismo dice explicitamente "Colombia", "Ecuador",
+  "Chile", "Bolivia", etc.), el departamento NO es Peru — usar
+  departamento="" (vacio) y nivel=IGNORAR, aunque la pagina o el hashtag
+  sugieran una ciudad peruana.
+    Ejemplo real: pagina "NoticiasTrujillo" publica con hashtag #Internacional
+    un terremoto en Colombia ("Fuente: SERVICIO GEOLOGICO COLOMBIANO - USGS",
+    47 fallecidos, edificios colapsados) — el texto NUNCA menciona Trujillo ni
+    Peru. Esto es IGNORAR, NO La Libertad/Trujillo. El hashtag #Internacional
+    y la fuente colombiana son la señal real; el nombre de la pagina no cuenta.
 
 REGLA 5 — MAPA FIJO DEPARTAMENTO → CLIENTE:
   ANCASH → "Antamina" dentro de su Área de Influencia Operativa (ver lista
@@ -467,7 +483,7 @@ distrito), nunca porque el TEMA coincide con el rubro de un cliente.
     usar "Ninguno (Coyuntura Nacional)" (o IGNORAR si tampoco es coyuntura nacional).
 "Ninguno (Coyuntura Nacional)" — politica nacional gobierno central.
 "Antamina" — ANCASH (incluye provincia HUARMEY), HUANUCO, PASCO.
-"Bechtel / Newmont" — CAJAMARCA (todas sus provincias). Empresas: Minera Yanacocha, Newmont, Conga, Bechtel.
+"Bechtel / Newmont" — CAJAMARCA (todas sus provincias). Empresas: Bechtel, Minera Yanacocha, Newmont, Conga.
 "Pisco" — ICA provincia Pisco, costera pesquera.
 "Agrícola 3P" — LA LIBERTAD.
 "Agrícola Chapi" — ICA (no Pisco).

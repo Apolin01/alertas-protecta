@@ -12,10 +12,16 @@
 $ErrorActionPreference = "Stop"
 
 $taskName = "AlertasProtecta"
-$scriptPath = "c:\proyectos\alertas-rss-main\alertas-rss-main\start_autonomous.ps1"
+$root = "c:\proyectos\alertas-rss-main\alertas-rss-main"
+$scriptPath = "$root\start_autonomous.ps1"
+$launcherPath = "$root\start_autonomous_launcher.vbs"
 
 if (-not (Test-Path $scriptPath)) {
     Write-Host "ERROR: No se encuentra $scriptPath" -ForegroundColor Red
+    exit 1
+}
+if (-not (Test-Path $launcherPath)) {
+    Write-Host "ERROR: No se encuentra $launcherPath" -ForegroundColor Red
     exit 1
 }
 
@@ -37,13 +43,19 @@ if ($existing) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
 }
 
-# Accion: ejecutar el supervisor
+# Accion: ejecutar el supervisor via el launcher .vbs (no powershell.exe
+# directo) — ver comentario en start_autonomous_launcher.vbs.
 $action = New-ScheduledTaskAction `
-    -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+    -Execute "wscript.exe" `
+    -Argument "`"$launcherPath`""
 
-# Trigger: al iniciar sesion del usuario actual
+# Trigger: al iniciar sesion del usuario actual, con 30s de retraso.
+# Sin el retraso, el proceso a veces recibe una señal de cierre porque la
+# sesion todavia se esta inicializando (visto en produccion: LastTaskResult
+# 0xC000013A / STATUS_CONTROL_C_EXIT — el supervisor moria justo despues de
+# lanzar el bridge, sin ningun error propio, y nunca llegaba a lanzar main.py).
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$trigger.Delay = "PT30S"
 
 # Settings: reiniciar hasta 3 veces si falla, permitir correr con bateria
 $settings = New-ScheduledTaskSettingsSet `
