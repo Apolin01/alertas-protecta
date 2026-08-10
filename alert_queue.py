@@ -62,6 +62,8 @@ class AlertQueue:
         # Contador de intentos — evita que una alerta se reintente sin límite
         # durante toda la ventana de 4h de get_recent_unsent (hasta 48 rondas).
         cur.execute("ALTER TABLE pending ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_pending_sent_created ON pending (sent, created_at)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_pending_group_sent ON pending (group_name, sent)")
         self.conn.commit()
 
     # ─────────────────────────────────────────────────────────────
@@ -199,12 +201,19 @@ class AlertQueue:
             groups.setdefault(r[1], []).append(entry)
         return groups
 
-    def cleanup_old(self, days: int = 2):
-        """Borra alertas enviadas de mas de N dias."""
+    def cleanup_old(self, days: int = 2, days_unsent: int = 7):
+        """Borra alertas enviadas de mas de N dias, y las nunca-enviadas de
+        mas de `days_unsent` dias — estas ultimas agotaron sus reintentos en
+        get_recent_unsent() (max 5, ventana de 4h) y quedan sent=0 para
+        siempre; sin este DELETE se acumulan indefinidamente en la tabla."""
         from datetime import timedelta
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff_unsent = (datetime.now() - timedelta(days=days_unsent)).isoformat()
         cur = self._cursor()
         cur.execute(
             "DELETE FROM pending WHERE sent=1 AND sent_at < %s", (cutoff,)
+        )
+        cur.execute(
+            "DELETE FROM pending WHERE sent=0 AND created_at < %s", (cutoff_unsent,)
         )
         self.conn.commit()

@@ -135,7 +135,6 @@ def fix_dept_by_city(alert: dict, config=None) -> dict:
 DEPT_TO_CLIENT = {
     "ANCASH":        "Antamina",
     "HUANUCO":       "Antamina",
-    "PASCO":         "Antamina",
     "CAJAMARCA":     "Bechtel / Newmont",
     "LA LIBERTAD":   "Clientes Norte",
 }
@@ -161,7 +160,7 @@ PROVINCIA_TO_CLIENT = {
     "PALPA":    "Clientes Sur",
     "ICA":      "Clientes Sur",
     "BARRANCA": "Antamina",
-    "HUARMEY":  "Agrícola Huarmey",
+    "HUARMEY":  "Antamina",
 }
 
 PROVINCIA_TO_DEPT = PROVINCIA_MULTI_CLIENTE_DEPT
@@ -185,61 +184,9 @@ AVISO_MUNICIPAL_TERMS = {
     "RECONOCIMIENTO", "RECONOCIMIENTOS", "HOMENAJE", "TRAYECTORIA",
 }
 
-CANDIDATURA_TERMS = {
-    "CANDIDATURA", "CANDIDATURAS", "CANDIDATO", "CANDIDATOS",
-    "CANDIDATA", "CANDIDATAS", "PRECANDIDATO", "PRECANDIDATA",
-    "PRECANDIDATURA", "POSTULANTE", "POSTULANTES", "ELECCIONES",
-}
-
-CANDIDATURA_TEXTO_TERMS = (
-    "PLAN DE GOBIERNO", "PLAN DE TRABAJO", "PROPUESTA DE GOBIERNO",
-    "CANDIDATA A LA ALCALDIA", "CANDIDATO A LA ALCALDIA",
-    "CANDIDATA A LA PRESIDENCIA REGIONAL", "CANDIDATO A LA PRESIDENCIA REGIONAL",
-)
-
-HOMICIDIO_AFTERMATH_TERMS = (
-    "VELORIO", "DESPIDEN", "ENTIERRO", "SEPELIO", "FUNERAL", "ULTIMO ADIOS",
-    "PRISION PREVENTIVA", "SENTENCIA", "CONDENA", "JUICIO", "AUDIENCIA",
-    "EXIGEN JUSTICIA", "EXIGIENDO JUSTICIA",
-)
-
-PRONUNCIAMIENTO_TERMS = (
-    "SE PRONUNCIA", "SE PRONUNCIO", "PRONUNCIAMIENTO", "SE REFIRIO",
-    "BRINDO DECLARACIONES", "DIO DECLARACIONES", "DECLARACIONES SOBRE",
-    "RECONSTRUCCION", "RECONSTRUCCIÓN", "RECONSTRUYEN",
-    "INFORMO SOBRE EL CASO", "SE DIRIGIO A LA PRENSA", "CONFERENCIA DE PRENSA",
-    "ACLARO SOBRE", "DESCARTO QUE",
-)
-
 ABUSO_SEXUAL_TERMS = (
     "ABUSO", "ABUSO SEXUAL", "VIOLACION", "VIOLACIÓN", "AGRESION SEXUAL",
     "AGRESIÓN SEXUAL", "TOCAMIENTOS INDEBIDOS",
-)
-
-DETENCION_TERMS = (
-    "DETENCION", "DETENCIÓN", "DETENIDO", "DETENIDA", "DETENIDOS", "DETENIDAS",
-    "DETIENEN", "DETUVIERON", "CAPTURA", "CAPTURADO", "CAPTURADOS", "CAPTURAN",
-    "ARRESTO", "ARRESTADO", "ARRESTADOS", "INTERVENIDO", "INTERVENIDOS",
-    "CAE BANDA", "CAYERON", "REQUISITORIADO", "APRESADO", "APREHENDIDO",
-)
-
-INVESTIGACION_TERMS = (
-    "INVESTIGA", "INVESTIGAN", "INVESTIGACION", "INVESTIGACIÓN",
-    "INVESTIGACIONES", "DILIGENCIAS", "DILIGENCIAS PRELIMINARES",
-    "PERITAJE", "PERICIA", "INDAGA", "ABRE INVESTIGACION", "FISCALIA INVESTIGA",
-)
-
-MUERTE_TERMS = (
-    "FALLECE", "FALLECEN", "FALLECIDO", "FALLECIDA", "FALLECIDOS",
-    "FALLECIMIENTO", "MUERE", "MUEREN", "MUERTO", "MUERTA", "MUERTOS",
-    "MUERTE", "DECESO", "PERDIO LA VIDA", "PIERDE LA VIDA", "VICTIMA MORTAL",
-    "VICTIMAS MORTALES", "CADAVER", "OCCISO",
-)
-
-MUERTE_CRIT_TERMS = (
-    "ASESIN", "SICARI", "HOMICID", "FEMINICID", "CRIMEN", "MATAN A", "MATO A",
-    "BALACERA", "BALEADO", "BALEADA", "BALEARON", "DISPAROS", "ARMA DE FUEGO",
-    "ACRIBILLADO", "APUNALADO", "APUÑALADO", "DESCUARTIZ",
 )
 
 FAUNA_TERMS = (
@@ -283,6 +230,10 @@ TRAFICO_TERRENOS_TERMS = (
     "INVASION DE TERRENO", "VENTA IRREGULAR DE LOTE",
 )
 
+# "relevancia" (Sheet) siempre debe coincidir con "nivel" (WhatsApp) — nunca un
+# INFO en rojo/Alto ni un CRIT en verde/Bajo.
+NIVEL_TO_RELEVANCIA = {"CRIT": "Alto", "ALRT": "Medio", "INFO": "Bajo"}
+
 
 def _strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
@@ -320,7 +271,7 @@ def fix_ica_provincia_by_text(alert: dict, texto: str, config) -> dict:
     return alert
 
 
-DEPARTAMENTOS_SIN_CLIENTE = {"AREQUIPA", "LAMBAYEQUE", "HUANCAVELICA", "JUNIN", "PUNO", "CUSCO"}
+DEPARTAMENTOS_SIN_CLIENTE = {"AREQUIPA", "LAMBAYEQUE", "HUANCAVELICA", "JUNIN", "PUNO", "CUSCO", "PASCO"}
 
 
 def fix_arequipa_block(alert: dict) -> dict:
@@ -585,7 +536,7 @@ class AlertClassifier:
                 not dept_check or dept_check not in PERU_DEPARTAMENTOS or dept_check == "ANCASH"
             ):
                 alert["departamento"] = "ANCASH"
-                alert["cliente"] = "Agrícola Huarmey"
+                alert["cliente"] = "Antamina"
 
             subcateg  = (alert.get("subcategoria") or "").upper()
             kws_upper = {str(k).upper() for k in (alert.get("palabras_clave") or [])}
@@ -624,78 +575,69 @@ class AlertClassifier:
                 )
                 alert["nivel"] = "IGNORAR"
 
+            # ─────────────────────────────────────────────────────────────
+            # Campos de juicio declarados por la IA — reemplazan las listas de
+            # palabras clave (DETENCION_TERMS, INVESTIGACION_TERMS, etc.) para la
+            # escalera de gravedad de REGLA 10. En vez de que el codigo adivine la
+            # intencion buscando sinonimos ("confiesa", "frustra", "velorio"...),
+            # la IA declara directamente en que etapa esta el hecho y si la muerte
+            # fue dolosa. Ya no hace falta anticipar cada forma de decir lo mismo.
+            # ─────────────────────────────────────────────────────────────
+            etapa_hecho = (alert.get("etapa_hecho") or "NO_APLICA").upper().strip()
+            involucra_muerte = bool(alert.get("involucra_muerte", False))
+            es_muerte_dolosa = involucra_muerte and bool(alert.get("es_muerte_violenta_dolosa", False))
+            es_autopromocion = bool(alert.get("es_autopromocion_politica_local", False))
+
             departamento_check = (alert.get("departamento") or "").upper().strip()
             if (
                 alert.get("nivel") == "INFO"
                 and departamento_check != "NACIONAL"
-                and (
-                    any(t in subcateg for t in CANDIDATURA_TERMS)
-                    or any(t in kws_upper for t in CANDIDATURA_TERMS)
-                    or any(t in texto_completo for t in CANDIDATURA_TEXTO_TERMS)
-                )
+                and es_autopromocion
             ):
                 log.info(
-                    f"Filtro candidatura local: subcategoria='{alert.get('subcategoria')}' "
-                    f"kws={alert.get('palabras_clave')} → IGNORAR"
-                )
-                alert["nivel"] = "IGNORAR"
-
-            if (
-                alert.get("nivel") in ("CRIT", "INFO")
-                and "HOMICID" in (subcateg + " " + " ".join(kws_upper))
-                and any(t in texto_completo for t in HOMICIDIO_AFTERMATH_TERMS)
-            ):
-                log.info(
-                    f"Filtro homicidio-aftermath: '{alert.get('titulo')}' → IGNORAR"
-                )
-                alert["nivel"] = "IGNORAR"
-
-            if any(
-                t in texto_completo or t in subcateg or t in kws_upper
-                for t in PRONUNCIAMIENTO_TERMS
-            ) and (
-                "HOMICID" in (subcateg + " " + " ".join(kws_upper))
-                or any(
-                    t in texto_completo or t in subcateg or t in kws_upper
-                    for t in MUERTE_TERMS
-                )
-            ):
-                log.info(
-                    f"Filtro pronunciamiento/reconstruccion: "
+                    f"Campo es_autopromocion_politica_local=true: "
                     f"'{alert.get('titulo')}' → IGNORAR"
                 )
                 alert["nivel"] = "IGNORAR"
 
-            if alert.get("nivel") == "CRIT" and any(
-                t in texto_completo or t in subcateg or t in kws_upper
-                for t in DETENCION_TERMS
-            ):
+            if etapa_hecho == "SEGUIMIENTO_POSTERIOR":
+                if es_muerte_dolosa:
+                    log.info(
+                        f"Campo etapa_hecho=SEGUIMIENTO_POSTERIOR (homicidio): "
+                        f"'{alert.get('titulo')}' → IGNORAR"
+                    )
+                    alert["nivel"] = "IGNORAR"
+                elif alert.get("nivel") in ("CRIT", "ALRT"):
+                    log.info(
+                        f"Campo etapa_hecho=SEGUIMIENTO_POSTERIOR: "
+                        f"'{alert.get('titulo')}' → {alert.get('nivel')} degradado a INFO"
+                    )
+                    alert["nivel"] = "INFO"
+
+            elif etapa_hecho in ("DETENCION_CAPTURA", "INVESTIGACION") and alert.get("nivel") == "CRIT":
                 log.info(
-                    f"Filtro detencion: '{alert.get('titulo')}' → CRIT degradado a ALRT"
+                    f"Campo etapa_hecho={etapa_hecho}: "
+                    f"'{alert.get('titulo')}' → CRIT degradado a ALRT"
                 )
                 alert["nivel"] = "ALRT"
 
-            if alert.get("nivel") == "CRIT" and any(
-                t in texto_completo or t in subcateg or t in kws_upper
-                for t in INVESTIGACION_TERMS
-            ):
-                log.info(
-                    f"Filtro investigacion: '{alert.get('titulo')}' → CRIT degradado a ALRT"
-                )
-                alert["nivel"] = "ALRT"
-
-            if alert.get("nivel") == "CRIT" and any(
-                t in texto_completo or t in subcateg or t in kws_upper
-                for t in MUERTE_TERMS
-            ) and not any(
-                t in texto_completo or t in subcateg or t in kws_upper
-                for t in MUERTE_CRIT_TERMS
-            ):
-                log.info(
-                    f"Filtro muerte-no-homicidio: '{alert.get('titulo')}' "
-                    f"→ CRIT degradado a ALRT"
-                )
-                alert["nivel"] = "ALRT"
+            elif involucra_muerte:
+                if alert.get("nivel") == "CRIT" and not es_muerte_dolosa:
+                    log.info(
+                        f"es_muerte_violenta_dolosa=false: "
+                        f"'{alert.get('titulo')}' → CRIT degradado a ALRT"
+                    )
+                    alert["nivel"] = "ALRT"
+                elif (
+                    alert.get("nivel") == "ALRT"
+                    and es_muerte_dolosa
+                    and etapa_hecho == "HECHO_OCURRIENDO"
+                ):
+                    log.info(
+                        f"es_muerte_violenta_dolosa=true y etapa_hecho=HECHO_OCURRIENDO: "
+                        f"'{alert.get('titulo')}' → ALRT elevado a CRIT"
+                    )
+                    alert["nivel"] = "CRIT"
 
             if any(
                 t in texto_completo or t in subcateg or t in kws_upper
@@ -729,6 +671,11 @@ class AlertClassifier:
                     f"Filtro trafico de terrenos: '{alert.get('titulo')}' INFO → ALRT"
                 )
                 alert["nivel"] = "ALRT"
+
+            # "relevancia" (Bajo/Medio/Alto) debe reflejar siempre el "nivel" final —
+            # se sobreescribe aquí (en vez de confiar en el campo que devuelve la IA)
+            # para que nunca queden combinaciones inconsistentes como INFO+Alto.
+            alert["relevancia"] = NIVEL_TO_RELEVANCIA.get(alert.get("nivel"), "Bajo")
 
             alert["source_url"]  = post.get("url", "")
             alert["source_page"] = post.get("source_page", "")

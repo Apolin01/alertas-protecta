@@ -110,7 +110,7 @@ def _normalize_ubication(dept: str, prov: str, dist: str, config=None) -> tuple:
     
     # Caso nacional
     if dept == "NACIONAL":
-        return "NACIONAL", "NACIONAL", ""
+        return "NACIONAL", "NACIONAL", "NACIONAL"
     
     # Si todo está vacío
     if not dept and not prov and not dist:

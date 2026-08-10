@@ -3,7 +3,7 @@
 # de modo que arranque automaticamente al iniciar sesion en Windows.
 #
 # Uso (UNA VEZ, abrir PowerShell como ADMINISTRADOR):
-#   cd c:\alertas-protecta
+#   cd c:\proyectos\alertas-rss-main\alertas-rss-main
 #   powershell -ExecutionPolicy Bypass -File setup_autostart.ps1
 #
 # Para deshabilitar el auto-arranque despues:
@@ -12,7 +12,7 @@
 $ErrorActionPreference = "Stop"
 
 $taskName = "AlertasProtecta"
-$scriptPath = "c:\alertas-protecta\start_autonomous.ps1"
+$scriptPath = "c:\proyectos\alertas-rss-main\alertas-rss-main\start_autonomous.ps1"
 
 if (-not (Test-Path $scriptPath)) {
     Write-Host "ERROR: No se encuentra $scriptPath" -ForegroundColor Red
@@ -78,5 +78,5 @@ Write-Host "  Detener:              Stop-ScheduledTask  -TaskName '$taskName'"
 Write-Host "  Ver estado:           Get-ScheduledTask   -TaskName '$taskName'"
 Write-Host "  Deshabilitar:         Unregister-ScheduledTask -TaskName '$taskName' -Confirm:`$false"
 Write-Host ""
-Write-Host "Logs del sistema: c:\alertas-protecta\logs\" -ForegroundColor Yellow
+Write-Host "Logs del sistema: c:\proyectos\alertas-rss-main\alertas-rss-main\logs\" -ForegroundColor Yellow
 Write-Host ""

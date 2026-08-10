@@ -1,19 +1,12 @@
-# start_autonomous.ps1
-# Supervisor que lanza y monitorea los 3 componentes del sistema:
-#   1. WhatsApp Bridge (Node, puerto 3000)
-#   2. Sistema de Alertas (Python main.py, incluye webhook server puerto 5000)
-#   3. ngrok tunnel (expone puerto 5000 a internet para webhooks de rss.app)
-#
-# Si cualquier componente crashea, lo reinicia automaticamente.
-# Logs en: c:\alertas-protecta\logs\
+
 
 $ErrorActionPreference = "Continue"
-$root = "c:\alertas-protecta"
+$root = "c:\proyectos\alertas-rss-main\alertas-rss-main"
 $logs = "$root\logs"
 
-# El bridge usa esta env var para ubicar la sesion de WhatsApp.
-# Por defecto apunta a /app (path de Docker), aqui lo apuntamos al proyecto.
-$env:WA_DATA_PATH = $root
+# NO seteamos WA_DATA_PATH: el bridge usa por defecto "/app" (resuelve a
+# C:\app en Windows), que es donde vive la sesion de WhatsApp REAL y activa
+# en esta maquina — no en $root\.wwebjs_auth. Cambiarlo rompe la sesion.
 
 # ─────────────────────────────────────────────────────────────
 # SINGLETON GUARD — evita 2 supervisores corriendo en paralelo
@@ -111,8 +104,12 @@ function Stop-OrphanProcesses {
         Add-Content -Path "$logs\supervisor.log" -Value "[$ts] Matando main.py huerfano PID $($p.ProcessId): $($p.CommandLine.Substring(0, [Math]::Min($p.CommandLine.Length, 100)))"
         Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
     }
+    # Start-Process lanza node con cwd=whatsapp_bridge pero el CommandLine solo
+    # muestra "node server.js" (sin la carpeta) — filtrar tambien por carpeta
+    # hace que nunca matcheara y el puerto 3000 quedaba atascado con un
+    # bridge huerfano para siempre. Alcanza con "server.js" a secas.
     $orphanBridges = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine -like "*server.js*" -and $_.CommandLine -like "*whatsapp_bridge*" }
+        Where-Object { $_.CommandLine -and $_.CommandLine -like "*server.js*" }
     foreach ($p in $orphanBridges) {
         $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         Add-Content -Path "$logs\supervisor.log" -Value "[$ts] Matando bridge huerfano PID $($p.ProcessId)"

@@ -169,15 +169,18 @@ Responde "SI" si:
 - Reportan el mismo evento (aunque con palabras distintas), O
 - Son actualizaciones consecutivas de una cobertura EN VIVO sobre el mismo tema
   (ej. resultados electorales en tiempo real donde cambian las cifras o el candidato que lidera,
-  un incendio cuyo numero de victimas se va actualizando, una busqueda de desaparecidos con avances).
+  un incendio cuyo numero de victimas se va actualizando, una busqueda de desaparecidos con avances), O
+- Involucran a la MISMA persona/entidad haciendo lo MISMO (ej. una reunion o anuncio) el MISMO dia,
+  aunque cada nota le ponga un enfoque o cita distinta (ej. "X se reune con fiscales por seguridad"
+  y "X coordina con fiscalia facultades para combatir el crimen" son la MISMA reunion).
 Responde "NO" solo si son temas/eventos CLARAMENTE DISTINTOS sin relacion entre si.
 Responde con una palabra: "SI" o "NO"
 
-TITULO 1: {titulo1[:100]}
-{desc1[:80]}
+TITULO 1: {titulo1[:200]}
+{desc1[:200]}
 
-TITULO 2: {titulo2[:100]}
-{desc2[:80]}
+TITULO 2: {titulo2[:200]}
+{desc2[:200]}
 
 Respuesta:"""
 
@@ -336,6 +339,9 @@ class Deduplicator:
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS descripcion_norm TEXT")
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS provincia TEXT")
         cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS url TEXT")
+        # titulo_norm es una bolsa de palabras ordenada alfabeticamente (para Jaccard/hash) —
+        # NIVEL 6 necesita el titulo real para que la IA compare oraciones, no palabras sueltas.
+        cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS titulo_original TEXT")
 
         cur.execute("""
             DELETE FROM sent_alerts
@@ -459,10 +465,14 @@ class Deduplicator:
                 dept = (alert.get("departamento") or "").upper().strip()
                 if dept:
                     cur = self._cursor()
-                    cutoff = (datetime.now() - timedelta(hours=1)).isoformat()
+                    # ⚠️ Variable local propia — NUNCA reasignar "cutoff" aquí: NIVEL 3/4
+                    # más abajo reutilizan esa misma variable asumiendo la ventana de
+                    # DEDUP_WINDOW_HOURS (24h). Un bug anterior la pisaba con 1h, lo que
+                    # reducia en silencio la ventana de Jaccard de título de 24h a 1h.
+                    cutoff_firma = (datetime.now() - timedelta(hours=1)).isoformat()
                     cur.execute(
                         "SELECT resumen FROM sent_alerts WHERE departamento = %s AND sent_at > %s AND resumen IS NOT NULL",
-                        (dept, cutoff)
+                        (dept, cutoff_firma)
                     )
                     for (rec_resumen,) in cur.fetchall():
                         if rec_resumen:
@@ -577,12 +587,12 @@ class Deduplicator:
 
             cutoff_ia = (datetime.now() - timedelta(hours=DEDUP_WINDOW_HOURS)).isoformat()
             cur.execute(
-                "SELECT titulo_norm, descripcion_norm FROM sent_alerts "
+                "SELECT titulo_norm, titulo_original, resumen FROM sent_alerts "
                 "WHERE departamento = %s AND sent_at > %s AND titulo_norm IS NOT NULL "
                 "ORDER BY sent_at DESC LIMIT 40",
                 (dept, cutoff_ia)
             )
-            for (titulo_existente, desc_existente) in cur.fetchall():
+            for (titulo_existente, titulo_real, resumen_existente) in cur.fetchall():
                 if not titulo_existente:
                     continue
                 set_t_exist = set(titulo_existente.split())
@@ -590,8 +600,8 @@ class Deduplicator:
                 if 0.15 <= score_medio < JACCARD_THRESHOLD_TITULO:
                     log.debug(f"[Dedup] Comparando semánticamente (Jaccard={score_medio:.2f}): podría ser duplicado")
                     if _ai_are_same_event(
-                        titulo, titulo_existente,
-                        desc[:150], desc_existente[:150] if desc_existente else ""
+                        titulo, titulo_real or titulo_existente,
+                        desc, resumen_existente or ""
                     ):
                         log.info(f"[Dedup] ⚡ NIVEL 6 (IA Semántica, Jaccard={score_medio:.2f}) → DUPLICADO")
                         _dedup_stats["NIVEL 6"] += 1
@@ -600,12 +610,12 @@ class Deduplicator:
             if prov:
                 cutoff_prov = (datetime.now() - timedelta(hours=DEDUP_SAME_PROVINCIA_HOURS)).isoformat()
                 cur.execute(
-                    "SELECT titulo_norm, descripcion_norm FROM sent_alerts "
+                    "SELECT titulo_norm, titulo_original, resumen FROM sent_alerts "
                     "WHERE departamento = %s AND provincia = %s AND sent_at > %s "
                     "AND titulo_norm IS NOT NULL ORDER BY sent_at DESC LIMIT 8",
                     (dept, prov, cutoff_prov)
                 )
-                for (titulo_existente, desc_existente) in cur.fetchall():
+                for (titulo_existente, titulo_real, resumen_existente) in cur.fetchall():
                     if not titulo_existente:
                         continue
                     set_t_exist = set(titulo_existente.split())
@@ -614,8 +624,8 @@ class Deduplicator:
                         continue
                     log.debug(f"[Dedup] Misma provincia {dept}/{prov} (Jaccard={score:.2f}): consultando IA")
                     if _ai_are_same_event(
-                        titulo, titulo_existente,
-                        desc[:150], desc_existente[:150] if desc_existente else ""
+                        titulo, titulo_real or titulo_existente,
+                        desc, resumen_existente or ""
                     ):
                         log.info(f"[Dedup] ⚡ NIVEL 6 (IA Semántica, misma provincia {dept}/{prov}) → DUPLICADO")
                         _dedup_stats["NIVEL 6"] += 1
@@ -657,15 +667,16 @@ class Deduplicator:
 
             cur.execute(
                 """INSERT INTO sent_alerts
-                   (content_hash, titulo_hash, titulo_norm, descripcion_norm,
+                   (content_hash, titulo_hash, titulo_norm, descripcion_norm, titulo_original,
                     departamento, provincia, subcategoria, cliente, resumen, url, sent_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (titulo_hash, departamento) DO NOTHING""",
                 (
                     ch,
                     titulo_hash,
                     titulo_words,
                     desc_words,
+                    titulo[:250],
                     alert.get("departamento", ""),
                     alert.get("provincia", ""),
                     alert.get("subcategoria", ""),

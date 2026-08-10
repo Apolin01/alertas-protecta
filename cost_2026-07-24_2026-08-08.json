@@ -1,0 +1,405 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "bucket",
+      "start_time": 1784851200,
+      "end_time": 1784937600,
+      "start_time_iso": "2026-07-24T00:00:00",
+      "end_time_iso": "2026-07-25T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "0.5944816500000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1784937600,
+      "end_time": 1785024000,
+      "start_time_iso": "2026-07-25T00:00:00",
+      "end_time_iso": "2026-07-26T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "0.03973350000000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785024000,
+      "end_time": 1785110400,
+      "start_time_iso": "2026-07-26T00:00:00",
+      "end_time_iso": "2026-07-27T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "0.7505434500000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785110400,
+      "end_time": 1785196800,
+      "start_time_iso": "2026-07-27T00:00:00",
+      "end_time_iso": "2026-07-28T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "0.6879220500000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785196800,
+      "end_time": 1785283200,
+      "start_time_iso": "2026-07-28T00:00:00",
+      "end_time_iso": "2026-07-29T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "1.492896750000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785283200,
+      "end_time": 1785369600,
+      "start_time_iso": "2026-07-29T00:00:00",
+      "end_time_iso": "2026-07-30T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "1.231251750000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785369600,
+      "end_time": 1785456000,
+      "start_time_iso": "2026-07-30T00:00:00",
+      "end_time_iso": "2026-07-31T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "1.542389550000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785456000,
+      "end_time": 1785542400,
+      "start_time_iso": "2026-07-31T00:00:00",
+      "end_time_iso": "2026-08-01T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "1.499297700000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785542400,
+      "end_time": 1785628800,
+      "start_time_iso": "2026-08-01T00:00:00",
+      "end_time_iso": "2026-08-02T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "1.068134850000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785628800,
+      "end_time": 1785715200,
+      "start_time_iso": "2026-08-02T00:00:00",
+      "end_time_iso": "2026-08-03T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "0.7657773000000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785715200,
+      "end_time": 1785801600,
+      "start_time_iso": "2026-08-03T00:00:00",
+      "end_time_iso": "2026-08-04T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "1.093174500000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785801600,
+      "end_time": 1785888000,
+      "start_time_iso": "2026-08-04T00:00:00",
+      "end_time_iso": "2026-08-05T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "0.05664645000000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785888000,
+      "end_time": 1785974400,
+      "start_time_iso": "2026-08-05T00:00:00",
+      "end_time_iso": "2026-08-06T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "2.519795250000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1785974400,
+      "end_time": 1786060800,
+      "start_time_iso": "2026-08-06T00:00:00",
+      "end_time_iso": "2026-08-07T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "2.181857400000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1786060800,
+      "end_time": 1786147200,
+      "start_time_iso": "2026-08-07T00:00:00",
+      "end_time_iso": "2026-08-08T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "0.6704686500000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    },
+    {
+      "object": "bucket",
+      "start_time": 1786147200,
+      "end_time": 1786233600,
+      "start_time_iso": "2026-08-08T00:00:00",
+      "end_time_iso": "2026-08-09T00:00:00",
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": {
+            "value": "0.4812591000000000000000000000",
+            "currency": "usd"
+          },
+          "quantity": null,
+          "line_item": null,
+          "user_id": null,
+          "api_key_id": null,
+          "project_id": "proj_00fQtRBLQCkZo3bp51stiGNw",
+          "organization_id": "org-aSsyhx7AyFb1kZNAyb1CfyRJ",
+          "project_name": "Default Project",
+          "organization_name": "protectaperu",
+          "user_email": null
+        }
+      ]
+    }
+  ]
+}
