@@ -316,26 +316,39 @@ app.post("/reload-groups", async (req, res) => {
 // ─────────────────────────────────────────────
 // DESCARGAR IMAGEN DESDE URL PÚBLICA
 // ─────────────────────────────────────────────
-async function downloadImage(imageUrl) {
+function downloadImageOnce(imageUrl) {
     return new Promise((resolve, reject) => {
         const handler = imageUrl.startsWith('https') ? https : http;
-        
-        handler.get(imageUrl, { timeout: 10000 }, (response) => {
+
+        // family: 4 fuerza IPv4 — algunos subdominios de fbcdn.net (ej. *.fna.fbcdn.net)
+        // resuelven a IPv6, y esta red no tiene ruta IPv6 (falla con "connect EACCES
+        // <direccion IPv6>"). Facebook siempre tiene IPv4 disponible, asi que forzarlo
+        // evita el fallo sin depender de que la red tenga IPv6 funcionando.
+        handler.get(imageUrl, { timeout: 10000, family: 4 }, (response) => {
             if (response.statusCode !== 200) {
                 reject(new Error(`HTTP ${response.statusCode}`));
                 return;
             }
-            
+
             const chunks = [];
             response.on('data', chunk => chunks.push(chunk));
             response.on('end', () => {
                 resolve(Buffer.concat(chunks));
             });
         }).on('error', reject);
-    }).catch(err => {
-        console.warn(`[Image] Error descargando: ${err.message}`);
-        return null;
     });
+}
+
+async function downloadImage(imageUrl, attempts = 2) {
+    for (let i = 1; i <= attempts; i++) {
+        try {
+            return await downloadImageOnce(imageUrl);
+        } catch (err) {
+            console.warn(`[Image] Error descargando (intento ${i}/${attempts}): ${err.message}`);
+            if (i < attempts) await new Promise(r => setTimeout(r, 1000));
+        }
+    }
+    return null;
 }
 
 app.post("/send", async (req, res) => {
