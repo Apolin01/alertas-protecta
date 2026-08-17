@@ -15,6 +15,32 @@ from config import Config
 log = logging.getLogger(__name__)
 
 
+def _fallback_image(message: str, alert: dict | None) -> str:
+    """Genera una imagen de respaldo (data URI) para cuando la imagen real
+    del post fallo al descargar (link caido/expirado — comun en posts
+    compartidos). Usa el dict `alert` completo (nivel, titulo, resumen,
+    categoria, palabras_clave) para que la imagen tenga el color y el
+    resumen correctos, igual que la imagen de respaldo que ya se genera
+    cuando el post nunca trajo imagen. Si no hay `alert` disponible, cae a
+    un parseo simple del texto ya formateado."""
+    try:
+        from whatsapp_image import generate_alert_image_data_uri
+        if alert:
+            return generate_alert_image_data_uri(alert)
+        nivel = "INFO"
+        for n in ("CRIT", "ALRT", "INFO"):
+            if n in message[:20]:
+                nivel = n
+                break
+        partes = message.split("*", 2)
+        cuerpo = partes[2].strip() if len(partes) >= 3 else message
+        cuerpo = cuerpo.split(" - *FUENTE:")[0].strip()
+        return generate_alert_image_data_uri({"nivel": nivel, "titulo": cuerpo[:200]})
+    except Exception as e:
+        log.debug(f"No se pudo generar imagen de respaldo: {e}")
+        return ""
+
+
 class WhatsAppSender:
     def __init__(self, config: Config):
         self.config = config
@@ -22,7 +48,7 @@ class WhatsAppSender:
         self._twilio_client = None
 
     # ─────────────────────────────────────────────
-    def send(self, group_name: str, message: str, image_url: str = "") -> bool | None:
+    def send(self, group_name: str, message: str, image_url: str = "", alert: dict | None = None) -> bool | None:
         """Envía un mensaje. Resultado de tres estados:
 
             True  → entregado y confirmado por el bridge.
@@ -32,11 +58,15 @@ class WhatsAppSender:
             None  → desenlace desconocido (timeout o error inesperado). El
                     bridge pudo haber entregado el mensaje igualmente, así
                     que reintentar produciría un duplicado en el grupo.
+
+        `alert`: dict completo de la alerta (nivel, titulo, resumen_whatsapp,
+        etc.) — opcional, se usa SOLO para generar la imagen de respaldo si
+        la imagen real falla al descargar.
         """
         if self.provider == "simulate":
             return self._send_simulate(group_name, message, image_url)
         elif self.provider == "bridge":
-            return self._send_bridge(group_name, message, image_url)
+            return self._send_bridge(group_name, message, image_url, alert)
         else:
             log.error(f"Provider desconocido: {self.provider}")
             return False
@@ -46,7 +76,7 @@ class WhatsAppSender:
     # Envía directo a grupos reales de WhatsApp
     # El bridge debe estar corriendo: node server.js
     # ─────────────────────────────────────────────
-    def _send_bridge(self, group_name: str, message: str, image_url: str = "") -> bool | None:
+    def _send_bridge(self, group_name: str, message: str, image_url: str = "", alert: dict | None = None) -> bool | None:
         """
         Llama al servidor Node.js local que tiene WhatsApp conectado.
         El bridge resuelve el nombre del grupo al chatId real.
@@ -74,6 +104,31 @@ class WhatsAppSender:
 
             if resp.status_code == 200:
                 data = resp.json()
+
+                if data.get("image_download_failed"):
+                    # El bridge NO mando nada todavia (evita duplicar el texto).
+                    # Reintentamos una vez con una imagen de respaldo generada
+                    # localmente; si tampoco se puede generar, reintentamos sin
+                    # imagen para al menos entregar el texto.
+                    log.warning(
+                        f"Imagen real no se pudo descargar para '{group_name}' "
+                        f"(link caido/expirado) — reintentando con imagen de respaldo"
+                    )
+                    fallback = _fallback_image(message, alert)
+                    resp2 = requests.post(
+                        f"{bridge_url}/send",
+                        headers={"x-auth-token": bridge_token, "Content-Type": "application/json"},
+                        json={"group_name": group_name, "message": message, "image_url": fallback},
+                        timeout=90
+                    )
+                    if resp2.status_code == 200:
+                        data2 = resp2.json()
+                        img_str = "✓ con imagen de respaldo" if data2.get("with_image") else "solo texto"
+                        log.info(f"Bridge OK ({img_str}, reintento) → {data2.get('group', group_name)}")
+                        return True
+                    log.error(f"Bridge error {resp2.status_code} en reintento (sin confirmar): {resp2.text[:200]}")
+                    return None
+
                 img_str = "✓ con imagen" if data.get("with_image") else "solo texto"
                 log.info(f"Bridge OK ({img_str}) → {data.get('group', group_name)}")
                 return True

@@ -395,18 +395,27 @@ app.post("/send", async (req, res) => {
                     imageSent = true;
                     console.log(`✅ [imagen URL] → "${realName}"`);
                 } else {
-                    console.warn(`[Image] Falló descarga, enviando solo texto`);
-                    await sock.sendMessage(chatId, { text: message });
+                    // NO enviar nada todavia — le avisamos a Python que la
+                    // descarga fallo para que reintente con la imagen de
+                    // respaldo generada localmente, en vez de mandar el texto
+                    // aqui y arriesgar un mensaje duplicado en el reintento.
+                    console.warn(`[Image] Falló descarga (link caido/expirado) — pidiendo reintento con imagen de respaldo`);
+                    return res.json({
+                        ok: true,
+                        group: realName,
+                        with_image: false,
+                        image_download_failed: true
+                    });
                 }
             }
         }
-        
+
         // Si no hay imagen o falló descarga, enviar solo texto
         if (!imageSent && image_url === "") {
             await sock.sendMessage(chatId, { text: message });
             console.log(`✅ [texto] → "${realName}"`);
         }
-        
+
         // Log de respuesta
         return res.json({
             ok: true,

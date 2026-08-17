@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 # FILTRO DURO — independiente de la IA
 # ─────────────────────────────────────────────────────────────
 LIMA_PROVINCIAS_OK = {
-    "BARRANCA", "SUPE", "HUAURA", "HUARAL",
+    "BARRANCA", "SUPE", "HUAURA",
 }
 
 def is_lima_valida(alert: dict) -> bool:
@@ -46,6 +46,7 @@ def is_lima_valida(alert: dict) -> bool:
 CITY_TO_DEPT = {
     "CHIMBOTE": "ANCASH", "HUARAZ": "ANCASH", "CASMA": "ANCASH",
     "CARAZ": "ANCASH", "HUARI": "ANCASH", "HUARMEY": "ANCASH",
+    "CULEBRAS": "ANCASH", "TORTUGAS": "ANCASH",
     "RECUAY": "ANCASH", "CARHUAZ": "ANCASH", "YUNGAY": "ANCASH",
     "AIJA": "ANCASH", "BOLOGNESI": "ANCASH", "PALLASCA": "ANCASH",
     "POMABAMBA": "ANCASH", "SAN MARCOS": "ANCASH", "CHAVIN": "ANCASH",
@@ -58,11 +59,14 @@ CITY_TO_DEPT = {
     "BAMBAMARCA": "CAJAMARCA", "CHOTA": "CAJAMARCA", "HUALGAYOC": "CAJAMARCA",
     "SAN IGNACIO": "CAJAMARCA", "CUTERVO": "CAJAMARCA",
     "CHINCHA": "ICA", "NASCA": "ICA", "NAZCA": "ICA", "PALPA": "ICA",
-    "PISCO": "ICA",
+    "PISCO": "ICA", "GROCIO PRADO": "ICA", "TAMBO DE MORA": "ICA",
+    "ALTO LARAN": "ICA", "CHINCHA ALTA": "ICA", "CHINCHA BAJA": "ICA",
     "BARRANCA": "LIMA", "SUPE": "LIMA", "HUAURA": "LIMA", "HUARAL": "LIMA",
-    "HUACHO": "LIMA",
+    "HUACHO": "LIMA", "RIMAC": "LIMA", "MIRAFLORES": "LIMA", "SURCO": "LIMA",
+    "SAN JUAN DE LURIGANCHO": "LIMA", "COMAS": "LIMA", "SAN ISIDRO": "LIMA",
     "TINGO MARIA": "HUANUCO", "LEONCIO PRADO": "HUANUCO",
     "CERRO DE PASCO": "PASCO", "OXAPAMPA": "PASCO",
+    "CASTILLA": "PIURA",
 }
 
 
@@ -271,7 +275,11 @@ def fix_ica_provincia_by_text(alert: dict, texto: str, config) -> dict:
     return alert
 
 
-DEPARTAMENTOS_SIN_CLIENTE = {"AREQUIPA", "LAMBAYEQUE", "HUANCAVELICA", "JUNIN", "PUNO", "CUSCO", "PASCO"}
+DEPARTAMENTOS_SIN_CLIENTE = {
+    "AREQUIPA", "LAMBAYEQUE", "HUANCAVELICA", "JUNIN", "PUNO", "CUSCO", "PASCO",
+    "AMAZONAS", "APURIMAC", "AYACUCHO", "CALLAO", "LORETO", "MADRE DE DIOS",
+    "MOQUEGUA", "PIURA", "SAN MARTIN", "TACNA", "TUMBES", "UCAYALI",
+}
 
 
 def fix_arequipa_block(alert: dict) -> dict:
@@ -467,7 +475,14 @@ class AlertClassifier:
             if not isinstance(alert, dict):
                 log.error(f"Respuesta IA no es dict: {type(alert).__name__} | raw: {raw[:200]}")
                 return None
-            required = ("nivel", "cliente", "departamento", "titulo", "resumen_whatsapp")
+            # "cliente" y "departamento" pueden venir vacios legitimamente en
+            # IGNORAR (contenido extranjero, pesca nacional sin ubicacion,
+            # sesgo de bundle corregido, etc. — ver REGLA 4/8 del prompt, que
+            # piden explicitamente departamento="" en esos casos). Exigirlos
+            # ahi descartaba de forma innecesaria clasificaciones correctas.
+            required = ("nivel", "titulo", "resumen_whatsapp")
+            if alert.get("nivel") != "IGNORAR":
+                required += ("cliente", "departamento")
             faltantes = [c for c in required if not alert.get(c)]
             if faltantes:
                 log.error(f"Campos obligatorios faltantes {faltantes} | raw: {raw[:200]}")
