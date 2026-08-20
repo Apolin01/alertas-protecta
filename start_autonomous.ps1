@@ -119,12 +119,15 @@ function Stop-OrphanProcesses {
 }
 Stop-OrphanProcesses
 
-# Detectar ngrok
-$ngrokAvailable = $null -ne (Get-Command ngrok -ErrorAction SilentlyContinue)
-if (-not $ngrokAvailable) {
-    Write-SupervisorLog "ADVERTENCIA: ngrok no instalado. Webhooks de rss.app NO funcionaran."
-    Write-SupervisorLog "Instalar desde https://ngrok.com/download y reiniciar este script."
-}
+# ngrok se maneja MANUALMENTE fuera de este supervisor (deliberado): la URL
+# publica de ngrok esta registrada en los 6 webhooks de rss.app, y el plan
+# gratis genera una URL nueva cada vez que se lanza un tunel. Si el supervisor
+# lanzara su propio ngrok en cada reinicio (como hacia antes de este cambio),
+# generaria una URL distinta a la registrada en rss.app en cada reinicio de
+# main.py/bridge — y este sistema se reinicia muy seguido. Por eso queda
+# forzado a false aqui: ngrok se lanza una sola vez a mano y sobrevive a los
+# reinicios de main.py/bridge sin verse afectado.
+$ngrokAvailable = $false
 
 Write-SupervisorLog "===== Arrancando sistema autonomo ====="
 

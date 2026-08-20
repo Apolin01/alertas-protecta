@@ -28,7 +28,7 @@ from whatsapp_image import BRIDGE_BASE64_LIMIT, generate_alert_image_data_uri
 
 from rss_fetcher import RSSFetcher as Fetcher
 
-from classifier import AlertClassifier
+from classifier import AlertClassifier, es_ruido_evidente, log_prefiltro_stats
 from deduplicator import Deduplicator
 from formatter import AlertFormatter
 from router import RegionRouter
@@ -270,6 +270,21 @@ def process_page(page_name, config, classifier, dedup,
         if not post.get("text", "").strip():
             continue
 
+        if es_ruido_evidente(post.get("text", "")):
+            log.info(f"[{page_name}] Pre-filtro: ruido evidente — omitido sin llamar a la IA")
+            continue
+
+        prefiltro_decision = None
+        try:
+            with _ai_lock:
+                prefiltro_decision = classifier.pre_filtro_ia(post.get("text", ""))
+        except Exception as e:
+            log.warning(f"[{page_name}] Pre-filtro error: {e}")
+
+        if prefiltro_decision == "RUIDO":
+            log.info(f"[{page_name}] Pre-filtro IA: RUIDO — omitido sin clasificador completo")
+            continue
+
         preview = post.get("text", "")[:100].replace("\n", " ")
         log.info(f"[{page_name}] Clasificando: {preview}...")
 
@@ -439,6 +454,21 @@ def run_forever():
                     if not post.get("text", "").strip():
                         return
 
+                    if es_ruido_evidente(post.get("text", "")):
+                        log.info(f"[WEBHOOK] Pre-filtro: ruido evidente — omitido sin llamar a la IA")
+                        return
+
+                    prefiltro_decision = None
+                    try:
+                        with _ai_lock:
+                            prefiltro_decision = classifier.pre_filtro_ia(post.get("text", ""))
+                    except Exception as e:
+                        log.warning(f"[WEBHOOK] Pre-filtro error: {e}")
+
+                    if prefiltro_decision == "RUIDO":
+                        log.info(f"[WEBHOOK] Pre-filtro IA: RUIDO — omitido sin clasificador completo")
+                        return
+
                     preview = post.get("text", "")[:100].replace("\n", " ")
                     log.info(f"[WEBHOOK] Clasificando: {preview}...")
 
@@ -513,6 +543,7 @@ def run_forever():
         queue.cleanup_old(days=2)
 
         dedup.log_dedup_stats()
+        log_prefiltro_stats()
 
         log.info(
             f"\nCiclo {ciclo} completo — "

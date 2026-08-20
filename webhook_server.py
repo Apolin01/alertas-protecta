@@ -77,8 +77,15 @@ class WebhookServer:
             try:
                 # Log request info
                 client_ip = request.remote_addr
-                log.info(f"[WEBHOOK] Recibido desde {client_ip}")
-                
+                # El payload de rss.app trae el ID del FEED individual que
+                # disparo el aviso, no el del bundle/webhook suscrito — nunca
+                # coincide con Config.RSS_BUNDLES (que son IDs de bundle
+                # completo). Por eso cada webhook se crea con su propia URL
+                # incluyendo ?client=<nombre>, y lo leemos aqui directo en
+                # vez de intentar adivinarlo del feed individual.
+                client_hint = request.args.get("client", "")
+                log.info(f"[WEBHOOK] Recibido desde {client_ip} (client_hint='{client_hint}')")
+
                 # Obtener payload
                 raw_payload = request.get_data(as_text=True)
                 
@@ -99,7 +106,7 @@ class WebhookServer:
                     return jsonify({"error": "Invalid JSON"}), 400
                 
                 # Procesar webhook
-                result = webhook_processor.process_webhook(payload)
+                result = webhook_processor.process_webhook(payload, client_hint=client_hint)
                 
                 self.stats["webhooks_received"] += 1
                 

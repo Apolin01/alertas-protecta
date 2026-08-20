@@ -25,7 +25,7 @@ class WebhookProcessor:
             v: k for k, v in Config.RSS_BUNDLES.items()
         }
     
-    def process_webhook(self, webhook_payload: Dict) -> Dict:
+    def process_webhook(self, webhook_payload: Dict, client_hint: str = "") -> Dict:
         """
         Procesa un webhook de rss.app y extrae posts procesables.
         
@@ -77,11 +77,18 @@ class WebhookProcessor:
             if not feed_id:
                 result["error"] = "Feed ID no encontrado en webhook"
                 return result
-            
-            # Mapear feed_id a cliente
-            client = self.bundle_to_client.get(feed_id)
+
+            client = client_hint if client_hint in Config.RSS_BUNDLES else None
             if not client:
-                log.warning(f"[WEBHOOK] Bundle {feed_id} no está configurado. Feed: {feed_info.get('title')}")
+                # Fallback: intentar mapear igual por si acaso (no deberia
+                # matchear nunca con el esquema actual de rss.app, pero no
+                # cuesta nada dejarlo como red de seguridad).
+                client = self.bundle_to_client.get(feed_id)
+            if not client:
+                log.warning(
+                    f"[WEBHOOK] Sin cliente: client_hint='{client_hint}' invalido y "
+                    f"feed {feed_id} no mapea a ningun bundle. Feed: {feed_info.get('title')}"
+                )
                 # Aún procesamos pero sin cliente asignado
             
             result["event_id"] = event_id

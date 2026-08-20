@@ -3,16 +3,88 @@ classifier.py — Clasifica posts con IA.
 Soporta: Groq, Gemini, Claude, OpenRouter.
 """
 
+import difflib
 import json
 import logging
 import re
 import time
 import unicodedata
+from collections import Counter
 from pathlib import Path
 import requests
 from config import Config
 
 log = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────
+# ESTADISTICAS DEL PRE-FILTRO IA (MODO SOMBRA) — ver pre_filtro_ia()
+# ─────────────────────────────────────────────────────────────
+_prefiltro_stats = Counter()
+
+
+def log_prefiltro_stats():
+    """Loguea (y resetea) el resumen del pre-filtro sombra del ciclo."""
+    total = _prefiltro_stats.pop("total", 0)
+    if total == 0:
+        _prefiltro_stats.clear()
+        return
+
+    ruido = _prefiltro_stats.pop("RUIDO", 0)
+    posible = _prefiltro_stats.pop("POSIBLE", 0)
+    errores = _prefiltro_stats.pop("error", 0)
+    falsos_negativos = _prefiltro_stats.pop("falso_negativo", 0)
+
+    log.info(
+        f"[PreFiltro-SOMBRA] Resumen del ciclo: {total} evaluados — "
+        f"RUIDO={ruido} POSIBLE={posible} error/sin-respuesta={errores} | "
+        f"⚠️ falsos_negativos (RUIDO pero nivel!=IGNORAR)={falsos_negativos}"
+    )
+    _prefiltro_stats.clear()
+
+
+def registrar_prefiltro_resultado(decision: str, nivel: str) -> None:
+    """Compara la decision del pre-filtro sombra contra el nivel real que
+    dio el clasificador completo, para medir si es seguro activarlo de verdad."""
+    if decision == "RUIDO" and nivel != "IGNORAR":
+        _prefiltro_stats["falso_negativo"] += 1
+        log.warning(
+            f"[PreFiltro-SOMBRA] ⚠️ FALSO NEGATIVO: pre-filtro dijo RUIDO pero "
+            f"el clasificador completo dio nivel={nivel} — se habria perdido esta alerta"
+        )
+
+# ─────────────────────────────────────────────────────────────
+# PRE-FILTRO DE RUIDO — evita gastar tokens de IA en texto que
+# el propio prompt ya manda a IGNORAR de forma inequivoca
+# (ver seccion "IGNORAR — RUIDO LOCAL SIN VALOR OPERACIONAL").
+# Solo patrones de alta precision: si hay duda, se deja pasar a la IA.
+# ─────────────────────────────────────────────────────────────
+_RUIDO_EVIDENTE_RE = re.compile(
+    r"""
+    convocatoria\s+(cas|laboral)|bolsa\s+de\s+trabajo|se\s+busca\s+personal|
+    postula\s+aqu[ií]|oferta\s+laboral|
+    catarata|hospedaje|circuito\s+tur[ií]stico|ecoturismo|
+    turismo\s+(rural|vivencial|de\s+aventura)|
+    feria\s+gastron[oó]mica|feria\s+artesanal|
+    campeonato\s+(de|distrital|provincial|regional)|
+    liga\s+(distrital|provincial)|
+    (medalla\s+de\s+(oro|plata|bronce)|finalista)\s+en\s+(la\s+)?(olimpiada|competencia)|
+    campa[ñn]a\s+de\s+(vacunaci[oó]n|esterilizaci[oó]n)|
+    d[ií]a\s+del\s+(maestro|juez|polic[ií]a|padre|madre)|
+    aniversario\s+(de|del)\s+(distrito|provincia)|
+    simulacro\s+de\s+(sismo|evacuaci[oó]n)|
+    farandula|farándula
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def es_ruido_evidente(texto: str) -> bool:
+    """True si el texto matchea un patron de IGNORAR obvio (turismo, empleo,
+    avisos municipales, deportes/premios, farandula) — evita llamar a la IA."""
+    if not texto:
+        return False
+    return bool(_RUIDO_EVIDENTE_RE.search(texto))
+
 
 # ─────────────────────────────────────────────────────────────
 # FILTRO DURO — independiente de la IA
@@ -130,6 +202,58 @@ def fix_dept_by_city(alert: dict, config=None) -> dict:
             alert["provincia"] = ""
 
         return alert
+    return alert
+
+
+def fix_provincia_by_distrito(alert: dict, config=None) -> dict:
+    """Corrige la provincia (y la ortografia del distrito) cuando el
+    departamento ya esta bien pero el distrito pertenece a OTRA provincia
+    del mismo departamento (ej. Chiquian es de Bolognesi, no de Huarmey,
+    aunque ambas sean ANCASH — la IA a veces mezcla provincias hermanas).
+    Tambien corrige errores de tipeo del distrito (ej. "CHIKUIAN" → "CHIQUIAN")
+    via coincidencia aproximada, solo si es muy cercana (>=0.85) para evitar
+    corregir de mas un distrito real pero distinto."""
+    dept = (alert.get("departamento") or "").upper().strip()
+    prov = (alert.get("provincia") or "").upper().strip()
+    dist = (alert.get("distrito") or "").upper().strip()
+    if not dept or not dist or dept not in PERU_DEPARTAMENTOS:
+        return alert
+
+    dept_prov_dist = getattr(config, "DEPT_PROV_DIST", {}) if config else {}
+    provincias_dept = dept_prov_dist.get(dept, {})
+    if not provincias_dept:
+        return alert
+
+    # Ya esta bien: el distrito pertenece a la provincia que dijo la IA.
+    if prov in provincias_dept and dist in provincias_dept[prov]:
+        return alert
+
+    # Coincidencia EXACTA del distrito en OTRA provincia del mismo departamento.
+    for prov_real, distritos in provincias_dept.items():
+        if dist in distritos:
+            if prov_real != prov:
+                log.info(
+                    f"Provincia corregida: IA dijo '{prov}' pero distrito "
+                    f"'{dist}' pertenece a '{prov_real}' (departamento {dept})"
+                )
+                alert["provincia"] = prov_real
+            return alert
+
+    # Sin coincidencia exacta: probar contra errores de tipeo (ej. CHIKUIAN).
+    todos_los_distritos = [d for lst in provincias_dept.values() for d in lst]
+    match = difflib.get_close_matches(dist, todos_los_distritos, n=1, cutoff=0.85)
+    if match:
+        dist_correcto = match[0]
+        for prov_real, distritos in provincias_dept.items():
+            if dist_correcto in distritos:
+                log.info(
+                    f"Distrito corregido por ortografia: IA dijo '{dist}' → "
+                    f"'{dist_correcto}' (provincia '{prov_real}', departamento {dept})"
+                )
+                alert["distrito"] = dist_correcto
+                alert["provincia"] = prov_real
+                return alert
+
     return alert
 
 
@@ -424,6 +548,15 @@ except FileNotFoundError as _e:
         "Asegúrate de que prompts/classifier_prompt.md existe."
     ) from _e
 
+_PRE_FILTRO_PROMPT_PATH = Path(__file__).parent / "prompts" / "pre_filtro_prompt.md"
+try:
+    PRE_FILTRO_SYSTEM_PROMPT = _PRE_FILTRO_PROMPT_PATH.read_text(encoding="utf-8")
+except FileNotFoundError as _e:
+    raise RuntimeError(
+        f"No se encontró el prompt en {_PRE_FILTRO_PROMPT_PATH}. "
+        "Asegúrate de que prompts/pre_filtro_prompt.md existe."
+    ) from _e
+
 USER_TEMPLATE = """Clasifica esta publicacion de Facebook.
 
 ATENCION: Determina el cliente por DONDE ocurrio el hecho en el texto,
@@ -534,6 +667,7 @@ class AlertClassifier:
                 alert["rubro"] = self.config.get_rubro(alert.get("cliente", ""))
 
             alert = fix_dept_by_city(alert, self.config)
+            alert = fix_provincia_by_distrito(alert, self.config)
 
             if not is_lima_valida(alert):
                 alert["nivel"]  = "IGNORAR"
@@ -758,5 +892,54 @@ class AlertClassifier:
                 return None
 
         log.error("OpenAI: reintentos agotados.")
+        return None
+
+    # ─────────────────────────────────────────────
+    # PRE-FILTRO IA (ETAPA 1, barato) — MODO SOMBRA
+    # Decide si vale la pena gastar el prompt completo (10k+ tokens) o si
+    # es ruido evidente. Por ahora solo se usa para loguear/medir, NO para
+    # saltarse classify() — ver PRE_FILTRO_SOMBRA en main.py.
+    # ─────────────────────────────────────────────
+    def pre_filtro_ia(self, texto: str) -> str | None:
+        """Devuelve 'RUIDO', 'POSIBLE' o None (error → tratar como POSIBLE)."""
+        key = self.config.OPENAI_API_KEY
+        if not key or not texto:
+            return None
+
+        _prefiltro_stats["total"] += 1
+        try:
+            resp = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {"role": "system", "content": PRE_FILTRO_SYSTEM_PROMPT},
+                        {"role": "user", "content": texto[:600]},
+                    ],
+                    "temperature": 0,
+                    "max_tokens": 5,
+                },
+                timeout=10,
+            )
+        except requests.exceptions.RequestException as e:
+            log.warning(f"[PreFiltro] error de red: {e}")
+            _prefiltro_stats["error"] += 1
+            return None
+
+        if resp.status_code != 200:
+            log.warning(f"[PreFiltro] OpenAI {resp.status_code}: {resp.text[:200]}")
+            _prefiltro_stats["error"] += 1
+            return None
+
+        content = resp.json()["choices"][0]["message"]["content"].strip().upper()
+        if content.startswith("RUIDO"):
+            _prefiltro_stats["RUIDO"] += 1
+            return "RUIDO"
+        if content.startswith("POSIBLE"):
+            _prefiltro_stats["POSIBLE"] += 1
+            return "POSIBLE"
+        log.warning(f"[PreFiltro] respuesta inesperada: {content!r}")
+        _prefiltro_stats["error"] += 1
         return None
 
