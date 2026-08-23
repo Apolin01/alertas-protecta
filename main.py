@@ -29,12 +29,12 @@ from whatsapp_image import BRIDGE_BASE64_LIMIT, generate_alert_image_data_uri
 from rss_fetcher import RSSFetcher as Fetcher
 
 from classifier import AlertClassifier, es_ruido_evidente, log_prefiltro_stats
-from deduplicator import Deduplicator
+from deduplicator import Deduplicator, DBUnavailable
 from formatter import AlertFormatter
 from router import RegionRouter
 from sender_whatsapp import WhatsAppSender
 from sender_sheets import SheetsSender
-from alert_queue import AlertQueue
+from alert_queue import AlertQueue, DBUnavailable as QueueDBUnavailable
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,7 +47,10 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 try:
-    from webhook_server import WebhookServer, process_webhook_queue, webhook_queue
+    from webhook_server import (
+        WebhookServer, process_webhook_queue, webhook_queue,
+        start_relay_poller_thread,
+    )
     WEBHOOKS_AVAILABLE = True
 except ImportError as e:
     log.warning(f"[INIT] webhook_server no disponible: {e}")
@@ -249,10 +252,13 @@ def process_page(page_name, config, classifier, dedup,
     posts_nuevos = []
     for post in posts:
         with _dedup_lock:
-            if dedup.already_processed(post):
-                log.info(f"[{page_name}] Duplicado descartado antes de IA: {post.get('url', '')[:120]}")
-                continue
-            dedup.mark_processed(post)
+            try:
+                if dedup.already_processed(post):
+                    log.info(f"[{page_name}] Duplicado descartado antes de IA: {post.get('url', '')[:120]}")
+                    continue
+                dedup.mark_processed(post)
+            except DBUnavailable:
+                log.warning(f"[{page_name}] BD de dedup caida — post pasa sin chequeo de duplicado")
         posts_nuevos.append(post)
 
     posts = posts_nuevos
@@ -304,12 +310,15 @@ def process_page(page_name, config, classifier, dedup,
             continue
 
         with _dedup_lock:
-            if dedup.is_duplicate_alert(alert):
-                log.info(
-                    f"[{page_name}] DUPLICADO — ya enviado: "
-                    f"dept={alert.get('departamento','?')} sub={alert.get('subcategoria','?')}"
-                )
-                continue
+            try:
+                if dedup.is_duplicate_alert(alert):
+                    log.info(
+                        f"[{page_name}] DUPLICADO — ya enviado: "
+                        f"dept={alert.get('departamento','?')} sub={alert.get('subcategoria','?')}"
+                    )
+                    continue
+            except DBUnavailable:
+                log.warning(f"[{page_name}] BD de dedup caida — alerta se envia sin chequeo de duplicado")
 
         cliente = alert.get("cliente", "")
         groups  = router.get_whatsapp_groups(cliente)
@@ -396,18 +405,30 @@ def run_forever():
 
     webhook_thread = None
     if WEBHOOKS_AVAILABLE and config.WEBHOOKS_ENABLED:
-        try:
-            log.info("[WEBHOOKS] Iniciando servidor webhook...")
-            webhook_server = WebhookServer(
-                host=config.WEBHOOK_HOST,
-                port=config.WEBHOOK_PORT,
-                secret=config.WEBHOOK_SECRET
-            )
-            webhook_thread = webhook_server.run_in_thread()
-            time.sleep(1)
-            log.info(f"[WEBHOOKS] ✓ Servidor escuchando en {config.WEBHOOK_HOST}:{config.WEBHOOK_PORT}")
-        except Exception as e:
-            log.error(f"[WEBHOOKS] Error iniciando servidor: {e}")
+        if config.WEBHOOK_RELAY_URL:
+            try:
+                log.info("[WEBHOOKS] Modo RELAY — iniciando polling contra servicio externo...")
+                webhook_thread = start_relay_poller_thread(
+                    config.WEBHOOK_RELAY_URL,
+                    config.WEBHOOK_RELAY_TOKEN,
+                    config.WEBHOOK_RELAY_POLL_SECONDS,
+                )
+                log.info(f"[WEBHOOKS] ✓ Polling activo contra {config.WEBHOOK_RELAY_URL}")
+            except Exception as e:
+                log.error(f"[WEBHOOKS] Error iniciando poller de relay: {e}")
+        else:
+            try:
+                log.info("[WEBHOOKS] Modo DIRECTO — iniciando servidor webhook local...")
+                webhook_server = WebhookServer(
+                    host=config.WEBHOOK_HOST,
+                    port=config.WEBHOOK_PORT,
+                    secret=config.WEBHOOK_SECRET
+                )
+                webhook_thread = webhook_server.run_in_thread()
+                time.sleep(1)
+                log.info(f"[WEBHOOKS] ✓ Servidor escuchando en {config.WEBHOOK_HOST}:{config.WEBHOOK_PORT}")
+            except Exception as e:
+                log.error(f"[WEBHOOKS] Error iniciando servidor: {e}")
 
     items_to_process = get_clients_for_rss()
 
@@ -485,9 +506,12 @@ def run_forever():
                         return
 
                     with _dedup_lock:
-                        if dedup.is_duplicate_alert(alert):
-                            log.info(f"[WEBHOOK] Duplicado detectado")
-                            return
+                        try:
+                            if dedup.is_duplicate_alert(alert):
+                                log.info(f"[WEBHOOK] Duplicado detectado")
+                                return
+                        except DBUnavailable:
+                            log.warning("[WEBHOOK] BD de dedup caida — alerta se envia sin chequeo de duplicado")
 
                     cliente = alert.get("cliente", "")
                     groups = router.get_whatsapp_groups(cliente)
@@ -540,7 +564,10 @@ def run_forever():
         if WEBHOOKS_AVAILABLE and config.WEBHOOKS_ENABLED:
             webhooks_status = f" | Webhooks: {webhook_queue.qsize()} encolados"
 
-        queue.cleanup_old(days=2)
+        try:
+            queue.cleanup_old(days=2)
+        except Exception as e:
+            log.warning(f"[COLA] cleanup_old salteado (BD no disponible): {e}")
 
         dedup.log_dedup_stats()
         log_prefiltro_stats()

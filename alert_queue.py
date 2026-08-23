@@ -3,65 +3,86 @@ alert_queue.py — Cola persistente de alertas pendientes de envio.
 
 Las alertas se acumulan durante el dia y se envian cuando
 llega la ventana horaria del grupo correspondiente.
-Usa PostgreSQL para persistir entre reinicios del programa.
+Usa SQLite local (archivo data/queue.db) para persistir entre reinicios
+del programa — no depende de red ni de cuotas de cómputo de terceros.
 """
 
-import os
 import json
 import logging
-import psycopg2
+import sqlite3
 from datetime import datetime
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+_DB_PATH = Path(__file__).parent / "data" / "queue.db"
+
 
 def _get_conn():
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        raise RuntimeError(
-            "DATABASE_URL no está configurado. "
-            "Agrega la cadena de conexión PostgreSQL en el archivo .env"
-        )
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql://", 1)
-    return psycopg2.connect(url)
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
+class DBUnavailable(Exception):
+    """La BD de la cola no responde ni tras reintentar — el llamador debe
+    saltarse esta operacion en vez de crashear el proceso completo. Con
+    SQLite local esto deberia ser rarisimo (solo si el disco falla)."""
+    pass
 
 
 class AlertQueue:
     def __init__(self):
-        self.conn = _get_conn()
+        try:
+            self.conn = _get_conn()
+        except Exception as e:
+            log.error(
+                f"[Cola] No se pudo abrir la BD local ({e}) — "
+                "arrancando SIN cola persistente, se reintentara conectar en cada operacion."
+            )
+            self.conn = None
+            return
         self._init_db()
 
     def _cursor(self):
-        """Retorna cursor reconectando si la conexión cayó."""
+        """Retorna cursor reconectando si la conexión cayó. Levanta DBUnavailable
+        (en vez de dejar propagar la excepcion cruda) si la BD sigue inalcanzable —
+        para que el llamador pueda saltarse esta operacion sin crashear todo el proceso."""
         try:
+            if self.conn is None:
+                raise sqlite3.OperationalError("sin conexion")
             self.conn.cursor().execute("SELECT 1")
-        except Exception:
-            log.warning("[Cola] Reconectando a PostgreSQL...")
+        except Exception as e:
+            log.warning("[Cola] Reconectando a la BD local...")
             try:
-                self.conn.close()
+                if self.conn:
+                    self.conn.close()
             except Exception:
                 pass
-            self.conn = _get_conn()
+            try:
+                self.conn = _get_conn()
+            except Exception as e2:
+                log.error(f"[Cola] BD sigue inalcanzable ({e2}) — se salta esta operacion.")
+                raise DBUnavailable(str(e2)) from e2
         return self.conn.cursor()
 
     def _init_db(self):
         cur = self._cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS pending (
-                id          SERIAL PRIMARY KEY,
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_name  TEXT NOT NULL,
                 message     TEXT NOT NULL,
                 image_url   TEXT DEFAULT '',
                 alert_json  TEXT DEFAULT '',
                 created_at  TEXT NOT NULL,
                 sent        INTEGER DEFAULT 0,
-                sent_at     TEXT
+                sent_at     TEXT,
+                attempts    INTEGER DEFAULT 0
             )
         """)
-        # Contador de intentos — evita que una alerta se reintente sin límite
-        # durante toda la ventana de 4h de get_recent_unsent (hasta 48 rondas).
-        cur.execute("ALTER TABLE pending ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_pending_sent_created ON pending (sent, created_at)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_pending_group_sent ON pending (group_name, sent)")
         self.conn.commit()
@@ -81,8 +102,8 @@ class AlertQueue:
         """Reserva la alerta para envío. True si la ganó este proceso."""
         cur = self._cursor()
         cur.execute(
-            "UPDATE pending SET sent=1, sent_at=%s, attempts=attempts+1 "
-            "WHERE id=%s AND sent=0 RETURNING id",
+            "UPDATE pending SET sent=1, sent_at=?, attempts=attempts+1 "
+            "WHERE id=? AND sent=0 RETURNING id",
             (datetime.now().isoformat(), alert_id)
         )
         won = cur.fetchone() is not None
@@ -93,7 +114,7 @@ class AlertQueue:
         """Devuelve la alerta a la cola. Solo tras un fallo CONFIRMADO
         (bridge inalcanzable / grupo inexistente), nunca tras un timeout."""
         cur = self._cursor()
-        cur.execute("UPDATE pending SET sent=0, sent_at=NULL WHERE id=%s", (alert_id,))
+        cur.execute("UPDATE pending SET sent=0, sent_at=NULL WHERE id=?", (alert_id,))
         self.conn.commit()
 
     def clear_pending(self):
@@ -110,7 +131,7 @@ class AlertQueue:
         cur = self._cursor()
         cur.execute(
             """INSERT INTO pending (group_name, message, image_url, alert_json, created_at)
-               VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+               VALUES (?, ?, ?, ?, ?) RETURNING id""",
             (
                 group_name,
                 message,
@@ -128,7 +149,7 @@ class AlertQueue:
         """Retorna todas las alertas pendientes para un grupo."""
         cur = self._cursor()
         cur.execute(
-            "SELECT id, message, image_url, alert_json FROM pending WHERE group_name=%s AND sent=0 ORDER BY id",
+            "SELECT id, message, image_url, alert_json FROM pending WHERE group_name=? AND sent=0 ORDER BY id",
             (group_name,)
         )
         return [
@@ -141,7 +162,7 @@ class AlertQueue:
         if not ids:
             return {}
         cur = self._cursor()
-        placeholders = ",".join(["%s"] * len(ids))
+        placeholders = ",".join(["?"] * len(ids))
         cur.execute(
             f"SELECT id, group_name, message, image_url, alert_json FROM pending "
             f"WHERE id IN ({placeholders}) AND sent=0 ORDER BY id",
@@ -157,7 +178,7 @@ class AlertQueue:
         """Marca una alerta como enviada."""
         cur = self._cursor()
         cur.execute(
-            "UPDATE pending SET sent=1, sent_at=%s WHERE id=%s",
+            "UPDATE pending SET sent=1, sent_at=? WHERE id=?",
             (datetime.now().isoformat(), alert_id)
         )
         self.conn.commit()
@@ -166,7 +187,7 @@ class AlertQueue:
         cur = self._cursor()
         if group_name:
             cur.execute(
-                "SELECT COUNT(*) FROM pending WHERE group_name=%s AND sent=0", (group_name,)
+                "SELECT COUNT(*) FROM pending WHERE group_name=? AND sent=0", (group_name,)
             )
         else:
             cur.execute("SELECT COUNT(*) FROM pending WHERE sent=0")
@@ -192,7 +213,7 @@ class AlertQueue:
         cur = self._cursor()
         cur.execute(
             "SELECT id, group_name, message, image_url, alert_json FROM pending "
-            "WHERE sent=0 AND created_at > %s AND attempts < %s ORDER BY id",
+            "WHERE sent=0 AND created_at > ? AND attempts < ? ORDER BY id",
             (cutoff, max_attempts)
         )
         groups: dict[str, list[dict]] = {}
@@ -211,9 +232,9 @@ class AlertQueue:
         cutoff_unsent = (datetime.now() - timedelta(days=days_unsent)).isoformat()
         cur = self._cursor()
         cur.execute(
-            "DELETE FROM pending WHERE sent=1 AND sent_at < %s", (cutoff,)
+            "DELETE FROM pending WHERE sent=1 AND sent_at < ?", (cutoff,)
         )
         cur.execute(
-            "DELETE FROM pending WHERE sent=0 AND created_at < %s", (cutoff_unsent,)
+            "DELETE FROM pending WHERE sent=0 AND created_at < ?", (cutoff_unsent,)
         )
         self.conn.commit()

@@ -1,15 +1,19 @@
-"""deduplicator.py — Evita enviar la misma noticia dos veces."""
+"""deduplicator.py — Evita enviar la misma noticia dos veces.
 
-import os
+Usa SQLite local (archivo data/dedup.db) en vez de un servidor PostgreSQL
+remoto — no depende de red ni de cuotas de cómputo de terceros (Neon, etc).
+"""
+
 import re
 import hashlib
 import logging
+import sqlite3
 import unicodedata
-import psycopg2
 from collections import Counter
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from functools import wraps
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 log = logging.getLogger(__name__)
@@ -257,41 +261,64 @@ def _extract_event_signature(text: str) -> str:
     return sig[:120] if sig else ""
 
 
+_DB_PATH = Path(__file__).parent / "data" / "dedup.db"
+
+
 def _get_conn():
-    url = os.environ.get("DATABASE_URL")
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
 
-    if not url:
-        raise RuntimeError(
-            "DATABASE_URL no está configurado. "
-            "Agrega la cadena de conexión PostgreSQL en el archivo .env"
-        )
 
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql://", 1)
-
-    return psycopg2.connect(url)
+class DBUnavailable(Exception):
+    """La BD de dedup no responde ni tras reintentar — el llamador debe
+    seguir funcionando SIN dedup en vez de crashear (mejor arriesgar algun
+    duplicado que dejar de enviar alertas por completo). Con SQLite local
+    esto deberia ser rarisimo (solo si el disco falla o esta bloqueado)."""
+    pass
 
 
 def _reconnect_and_retry(method):
-    """Reintenta el método una vez si la conexión a Postgres se cae a mitad de ejecución."""
+    """Reintenta el método una vez si la conexión a SQLite falla a mitad de ejecución
+    (ej. 'database is locked'). Si sigue fallando tras el reintento, levanta
+    DBUnavailable en vez de la excepcion cruda, para que el llamador pueda decidir
+    un fallback seguro."""
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         try:
             return method(self, *args, **kwargs)
-        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
-            log.warning(f"[Dedup] Conexión perdida en {method.__name__} ({e}) — reconectando y reintentando...")
+        except sqlite3.Error as e:
+            log.warning(f"[Dedup] Error de BD en {method.__name__} ({e}) — reconectando y reintentando...")
             try:
-                self.conn.close()
+                if self.conn:
+                    self.conn.close()
             except Exception:
                 pass
-            self.conn = _get_conn()
-            return method(self, *args, **kwargs)
+            try:
+                self.conn = _get_conn()
+                return method(self, *args, **kwargs)
+            except sqlite3.Error as e2:
+                log.error(
+                    f"[Dedup] BD sigue inalcanzable tras reintentar en {method.__name__} ({e2}) — "
+                    "continuando SIN dedup para no bloquear el envio de alertas."
+                )
+                raise DBUnavailable(str(e2)) from e2
     return wrapper
 
 
 class Deduplicator:
     def __init__(self):
-        self.conn = _get_conn()
+        try:
+            self.conn = _get_conn()
+        except Exception as e:
+            log.error(
+                f"[Dedup] No se pudo abrir la BD local ({e}) — "
+                "arrancando SIN dedup, se reintentara conectar en cada chequeo."
+            )
+            self.conn = None
+            return
         self._init_db()
 
     def log_dedup_stats(self):
@@ -299,11 +326,14 @@ class Deduplicator:
 
     def _cursor(self):
         try:
+            if self.conn is None:
+                raise sqlite3.OperationalError("sin conexion")
             self.conn.cursor().execute("SELECT 1")
         except Exception:
-            log.warning("[Dedup] Reconectando a PostgreSQL...")
+            log.warning("[Dedup] Reconectando a la BD local...")
             try:
-                self.conn.close()
+                if self.conn:
+                    self.conn.close()
             except Exception:
                 pass
             self.conn = _get_conn()
@@ -320,11 +350,12 @@ class Deduplicator:
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS sent_alerts (
-                id               SERIAL PRIMARY KEY,
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
                 content_hash     TEXT,
                 titulo_hash      TEXT,
                 titulo_norm      TEXT,
                 descripcion_norm TEXT,
+                titulo_original  TEXT,
                 departamento     TEXT,
                 provincia        TEXT,
                 subcategoria     TEXT,
@@ -334,39 +365,6 @@ class Deduplicator:
                 sent_at          TEXT,
                 UNIQUE(titulo_hash, departamento)
             )
-        """)
-        cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS titulo_hash TEXT")
-        cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS descripcion_norm TEXT")
-        cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS provincia TEXT")
-        cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS url TEXT")
-        # titulo_norm es una bolsa de palabras ordenada alfabeticamente (para Jaccard/hash) —
-        # NIVEL 6 necesita el titulo real para que la IA compare oraciones, no palabras sueltas.
-        cur.execute("ALTER TABLE sent_alerts ADD COLUMN IF NOT EXISTS titulo_original TEXT")
-
-        cur.execute("""
-            DELETE FROM sent_alerts
-            WHERE titulo_hash IS NOT NULL
-              AND departamento IS NOT NULL
-              AND id NOT IN (
-                SELECT MAX(id) FROM sent_alerts
-                WHERE titulo_hash IS NOT NULL AND departamento IS NOT NULL
-                GROUP BY titulo_hash, departamento
-              )
-        """)
-        cur.execute("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint c
-                    JOIN pg_class t ON c.conrelid = t.oid
-                    WHERE t.relname = 'sent_alerts'
-                      AND c.conname = 'sent_alerts_titulo_hash_departamento_key'
-                ) THEN
-                    ALTER TABLE sent_alerts
-                    ADD CONSTRAINT sent_alerts_titulo_hash_departamento_key
-                    UNIQUE (titulo_hash, departamento);
-                END IF;
-            END $$;
         """)
 
         cur.execute("CREATE INDEX IF NOT EXISTS idx_dept_sent ON sent_alerts (departamento, sent_at)")
@@ -399,7 +397,7 @@ class Deduplicator:
     def already_processed(self, post: dict) -> bool:
         h = self._url_hash(post)
         cur = self._cursor()
-        cur.execute("SELECT 1 FROM processed WHERE hash = %s", (h,))
+        cur.execute("SELECT 1 FROM processed WHERE hash = ?", (h,))
         return cur.fetchone() is not None
 
     @_reconnect_and_retry
@@ -408,11 +406,11 @@ class Deduplicator:
         try:
             cur = self._cursor()
             cur.execute(
-                "INSERT INTO processed (hash, url, seen_at) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                "INSERT INTO processed (hash, url, seen_at) VALUES (?, ?, ?) ON CONFLICT(hash) DO NOTHING",
                 (h, post.get("url", ""), datetime.now().isoformat())
             )
             self.conn.commit()
-        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        except sqlite3.Error:
             raise
         except Exception as e:
             self.conn.rollback()
@@ -432,7 +430,7 @@ class Deduplicator:
             cur = self._cursor()
             cutoff = (datetime.now() - timedelta(hours=window_hours)).isoformat()
             cur.execute(
-                "SELECT 1 FROM sent_alerts WHERE url = %s AND sent_at > %s LIMIT 1",
+                "SELECT 1 FROM sent_alerts WHERE url = ? AND sent_at > ? LIMIT 1",
                 (url, cutoff)
             )
             if cur.fetchone():
@@ -446,7 +444,7 @@ class Deduplicator:
         cur = self._cursor()
 
         cur.execute(
-            "SELECT 1 FROM sent_alerts WHERE content_hash = %s AND sent_at > %s LIMIT 1",
+            "SELECT 1 FROM sent_alerts WHERE content_hash = ? AND sent_at > ? LIMIT 1",
             (ch, cutoff)
         )
         if cur.fetchone():
@@ -471,7 +469,7 @@ class Deduplicator:
                     # reducia en silencio la ventana de Jaccard de título de 24h a 1h.
                     cutoff_firma = (datetime.now() - timedelta(hours=1)).isoformat()
                     cur.execute(
-                        "SELECT resumen FROM sent_alerts WHERE departamento = %s AND sent_at > %s AND resumen IS NOT NULL",
+                        "SELECT resumen FROM sent_alerts WHERE departamento = ? AND sent_at > ? AND resumen IS NOT NULL",
                         (dept, cutoff_firma)
                     )
                     for (rec_resumen,) in cur.fetchall():
@@ -492,9 +490,9 @@ class Deduplicator:
 
             cur.execute(
                 """SELECT 1 FROM sent_alerts
-                   WHERE departamento = %s AND provincia = %s
-                   AND UPPER(COALESCE(subcategoria, '')) = %s
-                   AND sent_at > %s LIMIT 1""",
+                   WHERE departamento = ? AND provincia = ?
+                   AND UPPER(COALESCE(subcategoria, '')) = ?
+                   AND sent_at > ? LIMIT 1""",
                 (dept, prov, sub, cutoff_agressive)
             )
             if cur.fetchone():
@@ -508,7 +506,7 @@ class Deduplicator:
 
             if dept:
                 cur.execute(
-                    "SELECT 1 FROM sent_alerts WHERE titulo_hash = %s AND departamento = %s AND sent_at > %s LIMIT 1",
+                    "SELECT 1 FROM sent_alerts WHERE titulo_hash = ? AND departamento = ? AND sent_at > ? LIMIT 1",
                     (th, dept, cutoff)
                 )
                 if cur.fetchone():
@@ -522,7 +520,7 @@ class Deduplicator:
             if len(set_titulo_nuevo) >= 2:
                 cur.execute(
                     "SELECT DISTINCT titulo_norm FROM sent_alerts "
-                    "WHERE departamento = %s AND sent_at > %s AND titulo_norm IS NOT NULL",
+                    "WHERE departamento = ? AND sent_at > ? AND titulo_norm IS NOT NULL",
                     (dept, cutoff)
                 )
 
@@ -564,7 +562,7 @@ class Deduplicator:
             if len(set_desc_nuevo) >= 3:
                 cur.execute(
                     "SELECT descripcion_norm FROM sent_alerts "
-                    "WHERE departamento = %s AND sent_at > %s AND descripcion_norm IS NOT NULL",
+                    "WHERE departamento = ? AND sent_at > ? AND descripcion_norm IS NOT NULL",
                     (dept, (datetime.now() - timedelta(hours=6)).isoformat())
                 )
 
@@ -588,7 +586,7 @@ class Deduplicator:
             cutoff_ia = (datetime.now() - timedelta(hours=DEDUP_WINDOW_HOURS)).isoformat()
             cur.execute(
                 "SELECT titulo_norm, titulo_original, resumen FROM sent_alerts "
-                "WHERE departamento = %s AND sent_at > %s AND titulo_norm IS NOT NULL "
+                "WHERE departamento = ? AND sent_at > ? AND titulo_norm IS NOT NULL "
                 "ORDER BY sent_at DESC LIMIT 40",
                 (dept, cutoff_ia)
             )
@@ -611,7 +609,7 @@ class Deduplicator:
                 cutoff_prov = (datetime.now() - timedelta(hours=DEDUP_SAME_PROVINCIA_HOURS)).isoformat()
                 cur.execute(
                     "SELECT titulo_norm, titulo_original, resumen FROM sent_alerts "
-                    "WHERE departamento = %s AND provincia = %s AND sent_at > %s "
+                    "WHERE departamento = ? AND provincia = ? AND sent_at > ? "
                     "AND titulo_norm IS NOT NULL ORDER BY sent_at DESC LIMIT 8",
                     (dept, prov, cutoff_prov)
                 )
@@ -657,7 +655,7 @@ class Deduplicator:
 
             if titulo_hash and alert.get("departamento"):
                 cur.execute(
-                    "SELECT 1 FROM sent_alerts WHERE titulo_hash = %s AND departamento = %s LIMIT 1",
+                    "SELECT 1 FROM sent_alerts WHERE titulo_hash = ? AND departamento = ? LIMIT 1",
                     (titulo_hash, alert.get("departamento"))
                 )
                 if cur.fetchone():
@@ -669,7 +667,7 @@ class Deduplicator:
                 """INSERT INTO sent_alerts
                    (content_hash, titulo_hash, titulo_norm, descripcion_norm, titulo_original,
                     departamento, provincia, subcategoria, cliente, resumen, url, sent_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT (titulo_hash, departamento) DO NOTHING""",
                 (
                     ch,
@@ -711,10 +709,10 @@ class Deduplicator:
         cutoff_alerts = (datetime.now() - timedelta(hours=DEDUP_WINDOW_HOURS * 2)).isoformat()
         cur = self._cursor()
 
-        cur.execute("DELETE FROM processed WHERE seen_at < %s", (cutoff,))
+        cur.execute("DELETE FROM processed WHERE seen_at < ?", (cutoff,))
         count_processed = cur.rowcount
 
-        cur.execute("DELETE FROM sent_alerts WHERE sent_at < %s", (cutoff_alerts,))
+        cur.execute("DELETE FROM sent_alerts WHERE sent_at < ?", (cutoff_alerts,))
         count_alerts = cur.rowcount
 
         self.conn.commit()

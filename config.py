@@ -254,6 +254,13 @@ class Config:
     WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "5000"))
     WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
+    # Modo relay (Railway u otro servicio en la nube en vez de ngrok):
+    # si WEBHOOK_RELAY_URL esta seteado, main.py usa polling contra ese
+    # servicio en vez de levantar su propio servidor Flask publico local.
+    WEBHOOK_RELAY_URL = os.getenv("WEBHOOK_RELAY_URL", "")
+    WEBHOOK_RELAY_TOKEN = os.getenv("WEBHOOK_RELAY_TOKEN", "")
+    WEBHOOK_RELAY_POLL_SECONDS = int(os.getenv("WEBHOOK_RELAY_POLL_SECONDS", "5"))
+
     # ─────────────────────────────────────────────
     # VALIDADOR AL ARRANQUE
     # ─────────────────────────────────────────────

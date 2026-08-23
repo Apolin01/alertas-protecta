@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from queue import Queue
 
+import requests
 from flask import Flask, request, jsonify
 
 from webhook_handler import webhook_processor
@@ -199,6 +200,93 @@ class WebhookServer:
         thread.start()
         log.info("[WEBHOOK_SERVER] Iniciado en thread daemon")
         return thread
+
+
+# ─────────────────────────────────────────────────────────────
+# MODO RELAY (Railway u otro servicio en la nube)
+# ─────────────────────────────────────────────────────────────
+# Cuando la PC local no es alcanzable desde internet (sin ngrok), un
+# pequeño servicio externo (webhook_relay/) recibe los webhooks de rss.app
+# y los guarda en memoria. Esta PC los va a buscar por polling (GET /pull)
+# en vez de recibirlos directamente — así no depende de una URL pública
+# propia. La normalización sigue siendo la MISMA (webhook_processor) que
+# en el modo directo, solo cambia cómo llega el payload crudo hasta acá.
+_relay_stats = {"pulls": 0, "items_recibidos": 0, "errores": 0}
+
+
+def _poll_relay_once(relay_url: str, token: str) -> int:
+    """Un solo ciclo de polling. Retorna cuántos eventos se encolaron."""
+    resp = requests.get(
+        f"{relay_url.rstrip('/')}/pull",
+        params={"token": token},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    items = data.get("items", [])
+    _relay_stats["pulls"] += 1
+
+    encolados = 0
+    for item in items:
+        client_hint = item.get("client", "")
+        payload = item.get("payload")
+        if payload is None:
+            continue
+
+        result = webhook_processor.process_webhook(payload, client_hint=client_hint)
+        _relay_stats["items_recibidos"] += 1
+
+        if not result["valid"]:
+            log.warning(f"[WEBHOOK-RELAY] Webhook inválido: {result['error']}")
+            continue
+
+        if result["items_processed"] > 0:
+            event_data = {
+                "event_id": result["event_id"],
+                "feed_id": result["feed_id"],
+                "feed_title": result["feed_title"],
+                "client": result["client"],
+                "items_new": result["items_new"],
+                "items_changed": result["items_changed"],
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            try:
+                webhook_queue.put_nowait(event_data)
+                encolados += 1
+                log.info(
+                    f"[WEBHOOK-RELAY] ✓ Encolado: {result['items_processed']} items "
+                    f"| Queue: {webhook_queue.qsize()}/{webhook_queue.maxsize}"
+                )
+            except Exception as e:
+                log.error(f"[WEBHOOK-RELAY] Error encolando: {e}")
+
+    return encolados
+
+
+def run_relay_poller(relay_url: str, token: str, interval: int = 5):
+    """Loop infinito de polling — pensado para correr en un thread daemon."""
+    log.info(f"[WEBHOOK-RELAY] Iniciando polling a {relay_url} cada {interval}s")
+    while True:
+        try:
+            _poll_relay_once(relay_url, token)
+        except Exception as e:
+            _relay_stats["errores"] += 1
+            log.warning(f"[WEBHOOK-RELAY] Error en polling: {e}")
+        time.sleep(interval)
+
+
+def start_relay_poller_thread(relay_url: str, token: str, interval: int = 5):
+    """Inicia el polling en un thread separado. Reemplaza a WebhookServer.run_in_thread()
+    cuando se usa un relay externo en vez de exponer un servidor local."""
+    thread = threading.Thread(
+        target=run_relay_poller,
+        args=(relay_url, token, interval),
+        daemon=True,
+        name="WebhookRelayPoller",
+    )
+    thread.start()
+    log.info("[WEBHOOK-RELAY] Poller iniciado en thread daemon")
+    return thread
 
 
 # Función global para procesar webhooks desde main.py
