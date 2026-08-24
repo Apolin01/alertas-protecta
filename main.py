@@ -49,7 +49,7 @@ log = logging.getLogger(__name__)
 try:
     from webhook_server import (
         WebhookServer, process_webhook_queue, webhook_queue,
-        start_relay_poller_thread,
+        start_relay_poller_thread, start_webhook_drain_thread,
     )
     WEBHOOKS_AVAILABLE = True
 except ImportError as e:
@@ -288,7 +288,8 @@ def process_page(page_name, config, classifier, dedup,
             log.warning(f"[{page_name}] Pre-filtro error: {e}")
 
         if prefiltro_decision == "RUIDO":
-            log.info(f"[{page_name}] Pre-filtro IA: RUIDO — omitido sin clasificador completo")
+            preview_ruido = post.get("text", "")[:150].replace("\n", " ")
+            log.info(f"[{page_name}] Pre-filtro IA: RUIDO — omitido: {preview_ruido}...")
             continue
 
         preview = post.get("text", "")[:100].replace("\n", " ")
@@ -430,6 +431,87 @@ def run_forever():
             except Exception as e:
                 log.error(f"[WEBHOOKS] Error iniciando servidor: {e}")
 
+    def process_webhook_post(post):
+        """Procesa un post del webhook igual que uno normal."""
+        if post.get("is_video") and not post.get("text"):
+            return
+        if not post.get("text", "").strip():
+            return
+
+        if es_ruido_evidente(post.get("text", "")):
+            log.info(f"[WEBHOOK] Pre-filtro: ruido evidente — omitido sin llamar a la IA")
+            return
+
+        prefiltro_decision = None
+        try:
+            with _ai_lock:
+                prefiltro_decision = classifier.pre_filtro_ia(post.get("text", ""))
+        except Exception as e:
+            log.warning(f"[WEBHOOK] Pre-filtro error: {e}")
+
+        if prefiltro_decision == "RUIDO":
+            preview_ruido = post.get("text", "")[:150].replace("\n", " ")
+            log.info(f"[WEBHOOK] Pre-filtro IA: RUIDO — omitido: {preview_ruido}...")
+            return
+
+        preview = post.get("text", "")[:100].replace("\n", " ")
+        log.info(f"[WEBHOOK] Clasificando: {preview}...")
+
+        with _ai_lock:
+            alert = classifier.classify(post)
+
+        if not alert:
+            log.info(f"[WEBHOOK] Sin respuesta del clasificador")
+            return
+
+        nivel = alert.get("nivel", "IGNORAR")
+        if nivel == "IGNORAR":
+            log.info(f"[WEBHOOK] Ignorado")
+            return
+
+        with _dedup_lock:
+            try:
+                if dedup.is_duplicate_alert(alert):
+                    log.info(f"[WEBHOOK] Duplicado detectado")
+                    return
+            except DBUnavailable:
+                log.warning("[WEBHOOK] BD de dedup caida — alerta se envia sin chequeo de duplicado")
+
+        cliente = alert.get("cliente", "")
+        groups = router.get_whatsapp_groups(cliente)
+
+        if "Coyuntura Nacional" in (groups or []):
+            if not _should_send_to_nacional(alert, config):
+                log.info(f"[WEBHOOK] NACIONAL RECHAZADA — no cumple filtros")
+                return
+
+        if not groups:
+            log.warning(f"[WEBHOOK] No hay grupos para cliente: {cliente}")
+            return
+
+        wa_msg = formatter.format_whatsapp(alert, post, config)
+        image_url = post.get("image_url", "")
+        queued_ids = []
+        for group in groups:
+            new_id = queue.push(group, wa_msg, image_url, alert)
+            queued_ids.append(new_id)
+
+        with _dedup_lock:
+            dedup.mark_alert_sent(alert)
+
+        if getattr(config, "SHEETS_ENABLED", False):
+            sheets_row = formatter.format_sheets_row(alert, post, config)
+            sh_sender.append_row(sheets_row)
+
+        if queued_ids:
+            flush_all_pending(queued_ids, queue, wa_sender, dedup)
+
+    if WEBHOOKS_AVAILABLE and config.WEBHOOKS_ENABLED:
+        # Drenado continuo en su propio thread — NO atado al ciclo de 5 min de
+        # RSS (antes se procesaban max 10 eventos por ciclo y con trafico alto
+        # la cola se llenaba hasta el maxsize=500, causando 503 en rss.app).
+        start_webhook_drain_thread(process_webhook_post)
+
     items_to_process = get_clients_for_rss()
 
     log.info("=" * 60)
@@ -462,86 +544,6 @@ def run_forever():
                 "Revisa logs anteriores para la causa raíz."
             )
             webhook_thread = None
-
-        if WEBHOOKS_AVAILABLE and config.WEBHOOKS_ENABLED:
-            webhook_count = webhook_queue.qsize()
-            if webhook_count > 0:
-                log.info(f"[WEBHOOKS] {webhook_count} evento(s) pendiente(s)")
-
-                def process_webhook_post(post):
-                    """Procesa un post del webhook igual que uno normal."""
-                    if post.get("is_video") and not post.get("text"):
-                        return
-                    if not post.get("text", "").strip():
-                        return
-
-                    if es_ruido_evidente(post.get("text", "")):
-                        log.info(f"[WEBHOOK] Pre-filtro: ruido evidente — omitido sin llamar a la IA")
-                        return
-
-                    prefiltro_decision = None
-                    try:
-                        with _ai_lock:
-                            prefiltro_decision = classifier.pre_filtro_ia(post.get("text", ""))
-                    except Exception as e:
-                        log.warning(f"[WEBHOOK] Pre-filtro error: {e}")
-
-                    if prefiltro_decision == "RUIDO":
-                        log.info(f"[WEBHOOK] Pre-filtro IA: RUIDO — omitido sin clasificador completo")
-                        return
-
-                    preview = post.get("text", "")[:100].replace("\n", " ")
-                    log.info(f"[WEBHOOK] Clasificando: {preview}...")
-
-                    with _ai_lock:
-                        alert = classifier.classify(post)
-
-                    if not alert:
-                        log.info(f"[WEBHOOK] Sin respuesta del clasificador")
-                        return
-
-                    nivel = alert.get("nivel", "IGNORAR")
-                    if nivel == "IGNORAR":
-                        log.info(f"[WEBHOOK] Ignorado")
-                        return
-
-                    with _dedup_lock:
-                        try:
-                            if dedup.is_duplicate_alert(alert):
-                                log.info(f"[WEBHOOK] Duplicado detectado")
-                                return
-                        except DBUnavailable:
-                            log.warning("[WEBHOOK] BD de dedup caida — alerta se envia sin chequeo de duplicado")
-
-                    cliente = alert.get("cliente", "")
-                    groups = router.get_whatsapp_groups(cliente)
-
-                    if "Coyuntura Nacional" in (groups or []):
-                        if not _should_send_to_nacional(alert, config):
-                            log.info(f"[WEBHOOK] NACIONAL RECHAZADA — no cumple filtros")
-                            return
-
-                    if not groups:
-                        log.warning(f"[WEBHOOK] No hay grupos para cliente: {cliente}")
-                        return
-
-                    wa_msg = formatter.format_whatsapp(alert, post, config)
-                    image_url = post.get("image_url", "")
-                    queued_ids = []
-                    for group in groups:
-                        new_id = queue.push(group, wa_msg, image_url, alert)
-                        queued_ids.append(new_id)
-
-                    with _dedup_lock:
-                        dedup.mark_alert_sent(alert)
-
-                    if queued_ids:
-                        flush_all_pending(queued_ids, queue, wa_sender, dedup)
-
-                try:
-                    process_webhook_queue(process_webhook_post)
-                except Exception as e:
-                    log.error(f"[WEBHOOKS] Error procesando: {e}")
 
         try:
             retry_unsent(queue, wa_sender, dedup)

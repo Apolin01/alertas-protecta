@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone, timedelta
-from queue import Queue
+from queue import Queue, Empty
 
 import requests
 from flask import Flask, request, jsonify
@@ -326,8 +326,40 @@ def process_webhook_queue(processor_func):
     
     if processed > 0:
         log.info(f"[WEBHOOK] Procesados {processed} evento(s)")
-    
+
     return processed
+
+
+def start_webhook_drain_thread(processor_func, idle_timeout: float = 1.0):
+    """Drena la cola de webhooks en su propio thread, de forma continua —
+    NO depende del ciclo de 5 min de RSS (donde antes solo se procesaban
+    10 eventos por ciclo, y con trafico alto la cola se llenaba hasta el
+    maxsize=500 y rss.app empezaba a recibir 503). Con esto se procesa
+    apenas llega, sin acumular backlog."""
+    def _loop():
+        log.info("[WEBHOOK] Drenado continuo iniciado en thread daemon")
+        while True:
+            try:
+                event_data = webhook_queue.get(timeout=idle_timeout)
+            except Empty:
+                continue
+
+            try:
+                log.info(
+                    f"[WEBHOOK] Procesando evento {event_data['event_id']} "
+                    f"({event_data['client']})"
+                )
+                for item in event_data.get("items_new", []):
+                    try:
+                        processor_func(item)
+                    except Exception as e:
+                        log.error(f"[WEBHOOK] Error procesando item: {e}")
+            except Exception as e:
+                log.error(f"[WEBHOOK] Error procesando evento: {e}")
+
+    thread = threading.Thread(target=_loop, daemon=True, name="WebhookDrain")
+    thread.start()
+    return thread
 
 
 if __name__ == "__main__":

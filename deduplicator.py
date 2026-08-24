@@ -425,7 +425,9 @@ class Deduplicator:
         _dedup_stats["total_checks"] += 1
 
         # NIVEL 0: URL exacta
-        url = alert.get("url", "").strip()
+        # OJO: classifier.py guarda el link como "source_url", no "url" — si se
+        # lee la clave equivocada esto siempre da "" y el NIVEL 0 nunca corre.
+        url = (alert.get("source_url") or alert.get("url") or "").strip()
         if url:
             cur = self._cursor()
             cutoff = (datetime.now() - timedelta(hours=window_hours)).isoformat()
@@ -644,7 +646,7 @@ class Deduplicator:
         ch = self._content_hash(alert)
         titulo = alert.get("titulo", "").strip()
         desc = alert.get("resumen_whatsapp", "").strip()
-        url = alert.get("url", "").strip()
+        url = (alert.get("source_url") or alert.get("url") or "").strip()
 
         titulo_words = " ".join(sorted(_words_set(titulo)))[:500] if titulo else ""
         desc_words = " ".join(sorted(_words_set(desc)))[:500] if desc else ""

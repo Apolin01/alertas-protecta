@@ -317,6 +317,18 @@ ABUSO_SEXUAL_TERMS = (
     "AGRESIÓN SEXUAL", "TOCAMIENTOS INDEBIDOS",
 )
 
+SEGUIMIENTO_POSTERIOR_TERMS = (
+    "SEPULTAN", "SEPULTADO", "SEPULTADA", "ENTIERRO", "ENTIERRAN",
+    "VELORIO", "VELAN EL CUERPO", "DAN EL ULTIMO ADIOS", "DAN EL ÚLTIMO ADIOS",
+    "DESPIDEN A", "FUNERAL", "SEPELIO",
+    "PIDEN JUSTICIA", "PIDE JUSTICIA", "EXIGEN JUSTICIA", "EXIGE JUSTICIA",
+    "CLAMAN JUSTICIA", "PEDIDOS DE JUSTICIA",
+)
+
+MUERTE_VIOLENTA_TERMS = (
+    "ASESINAT", "ASESIN", "HOMICIDIO", "FEMINICID", "SICARIATO",
+)
+
 FAUNA_TERMS = (
     "FAUNA", "FAUNA SILVESTRE", "ANIMAL SILVESTRE", "SERFOR",
     "AVISTAMIENTO", "MALTRATO ANIMAL", "RESCATE DE ANIMAL",
@@ -491,12 +503,24 @@ def fix_client_by_dept(alert: dict) -> dict:
             alert["nivel"] = "IGNORAR"
             return alert
 
-    if not departamento or any(x in departamento for x in [
-        "NO ESPECIF", "DESCONOC", "NACIONAL", "NO INDICA"
-    ]):
-        if alert.get("cliente") not in ["Ninguno (Coyuntura Nacional)"] or not es_politica:
-            log.info(f"Sin departamento claro ('{departamento}') → forzando IGNORAR")
+    if departamento == "NACIONAL":
+        # REGLA 7c permite VARIOS temas nacionales legitimos ademas de politica
+        # (MINEM, MEF/economia, MIDAGRI, protestas nacionales, etc.) — exigir
+        # categoria=="Coyuntura Politica" mataba de forma incorrecta alertas
+        # nacionales validas con otra categoria (ej. "Economia-Desarrollo").
+        # Basta con confiar en que "cliente" ya se determino bien por REGLA 0/7.
+        if alert.get("cliente") != "Ninguno (Coyuntura Nacional)":
+            log.info(
+                f"departamento=NACIONAL pero cliente='{alert.get('cliente')}' → forzando IGNORAR"
+            )
             alert["nivel"] = "IGNORAR"
+        return alert
+
+    if not departamento or any(x in departamento for x in [
+        "NO ESPECIF", "DESCONOC", "NO INDICA"
+    ]):
+        log.info(f"Sin departamento claro ('{departamento}') → forzando IGNORAR")
+        alert["nivel"] = "IGNORAR"
         return alert
 
     correcto = DEPT_TO_CLIENT.get(departamento)
@@ -788,6 +812,22 @@ class AlertClassifier:
                     )
                     alert["nivel"] = "CRIT"
 
+            # Red de seguridad independiente de "etapa_hecho": la IA a veces
+            # declara HECHO_OCURRIENDO en vez de SEGUIMIENTO_POSTERIOR aunque
+            # el propio texto diga "sepultan"/"entierro"/"piden justicia"
+            # (cobertura claramente posterior a un homicidio). No depende de
+            # que la IA haya etiquetado bien el campo — mira el texto directo.
+            if (
+                alert.get("nivel") in ("CRIT", "ALRT")
+                and any(t in texto_completo for t in MUERTE_VIOLENTA_TERMS)
+                and any(t in texto_completo for t in SEGUIMIENTO_POSTERIOR_TERMS)
+            ):
+                log.info(
+                    f"Filtro seguimiento posterior (texto): "
+                    f"'{alert.get('titulo')}' {alert.get('nivel')} → IGNORAR"
+                )
+                alert["nivel"] = "IGNORAR"
+
             if any(
                 t in texto_completo or t in subcateg or t in kws_upper
                 for t in FAUNA_TERMS
@@ -918,9 +958,16 @@ class AlertClassifier:
                         {"role": "user", "content": texto[:600]},
                     ],
                     "temperature": 0,
-                    "max_tokens": 5,
+                    # Antes forzabamos la respuesta en 5 tokens (una palabra, sin
+                    # espacio para razonar) — eso lo volvia mas "gatillo facil" que
+                    # el clasificador completo, que SI tiene espacio para pensar
+                    # mientras llena el JSON. Ahora se le pide razonar brevemente
+                    # primero y recien al final dar el veredicto, igual que hacia
+                    # el prompt original al decidir "IGNORAR" como parte de un
+                    # analisis completo, no como reflejo aislado.
+                    "max_tokens": 150,
                 },
-                timeout=10,
+                timeout=15,
             )
         except requests.exceptions.RequestException as e:
             log.warning(f"[PreFiltro] error de red: {e}")
@@ -932,14 +979,18 @@ class AlertClassifier:
             _prefiltro_stats["error"] += 1
             return None
 
-        content = resp.json()["choices"][0]["message"]["content"].strip().upper()
-        if content.startswith("RUIDO"):
+        content_raw = resp.json()["choices"][0]["message"]["content"].strip()
+        # El veredicto va en la ULTIMA linea (ver instruccion del prompt) — todo
+        # lo anterior es el razonamiento breve.
+        ultima_linea = content_raw.strip().splitlines()[-1].strip().upper() if content_raw.strip() else ""
+
+        if "RUIDO" in ultima_linea and "POSIBLE" not in ultima_linea:
             _prefiltro_stats["RUIDO"] += 1
             return "RUIDO"
-        if content.startswith("POSIBLE"):
+        if "POSIBLE" in ultima_linea:
             _prefiltro_stats["POSIBLE"] += 1
             return "POSIBLE"
-        log.warning(f"[PreFiltro] respuesta inesperada: {content!r}")
+        log.warning(f"[PreFiltro] respuesta inesperada: {content_raw[:200]!r}")
         _prefiltro_stats["error"] += 1
         return None
 

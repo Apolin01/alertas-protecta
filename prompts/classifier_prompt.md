@@ -128,6 +128,15 @@ REGLA 1 — ESTRUCTURA OBLIGATORIA DE UBICACIÓN:
   departamento/provincia/distrito: SIEMPRE mayúsculas, sin tildes. Nunca "NO ESPECIFICA"/"DESCONOCIDO".
   Si no se menciona provincia → igual al departamento. Si no se menciona distrito → igual a la provincia.
   EXCEPCIÓN NACIONAL: departamento="NACIONAL", provincia="NACIONAL", distrito="".
+  ⚠️ PROHIBIDO INVENTAR provincia/distrito usando tu conocimiento general de donde opera la empresa
+  (ej. saber que el mineroducto de Antamina termina en el puerto de Huarmey) — SOLO usa un
+  provincia/distrito especifico si el TEXTO lo menciona literalmente. Si el texto habla de un evento,
+  charla, conferencia, entrevista o actividad de la empresa SIN mencionar ningun lugar especifico
+  (ej. "Antamina participo en el panel del GESS 2026 sobre transparencia..."), usa
+  provincia=departamento (regla de arriba) — NO “HUARMEY” ni ningun otro distrito real, aunque sepas
+  que ahi opera la empresa. Ej: noticia sobre una funcionaria de Antamina exponiendo en un panel/
+  conferencia sin mencionar lugar → departamento=ANCASH, provincia=ANCASH, distrito=ANCASH (NUNCA
+  HUARMEY inventado).
 
 REGLA 2 — EXTRACCIÓN DE DISTRITO (ES LO MÁS IMPORTANTE):
   El DISTRITO es el nivel administrativo MÁS ESPECÍFICO (pueblo, localidad, comunidad, anexo, rondas).
@@ -169,6 +178,20 @@ REGLA 4 — UBICACION MANDA, NO LA FUENTE. La página que publica NO determina c
 
   ⚠️ NOTICIAS DE OTROS PAISES: el nombre de la pagina o un hashtag con un lugar del Peru (ej. #NoticiasTrujillo) NUNCA es evidencia de ubicacion — es solo el nombre de la cuenta. Si el TEXTO describe un hecho en otro pais (fuente extranjera, gentilicio extranjero, institucion de otro pais, o menciona explicitamente Colombia/Ecuador/Chile/Bolivia/etc.), el departamento NO es Peru — usar departamento="" y nivel=IGNORAR, aunque la pagina o el hashtag sugieran una ciudad peruana.
     Ej: pagina "NoticiasTrujillo" publica con hashtag #Internacional un terremoto en Colombia ("Fuente: SERVICIO GEOLOGICO COLOMBIANO") — el texto nunca menciona Trujillo ni Peru → IGNORAR, NO La Libertad/Trujillo.
+
+  ⚠️ NORMATIVA/POLITICA NACIONAL REPUBLICADA POR UNA PAGINA LOCAL: cuando el hecho es una resolucion,
+  ley, decreto o creacion de un grupo/comision a nivel de un MINISTERIO (aplica a TODO el pais, sin
+  mencionar ninguna region especifica en el cuerpo de la noticia), el nombre de la pagina, sus hashtags,
+  Y la linea "Fuente" (ej. "Fuente: Ministerio Publico - Distrito Fiscal de Ancash") NO convierten el
+  hecho en un evento de esa region — es solo quien lo redifundio localmente. Sigue las REGLAS 0/7 de
+  alcance nacional: cliente="Ninguno (Coyuntura Nacional)", departamento="NACIONAL".
+    Ej: pagina "TVHuarmey" (hashtags #Ancash #Huarmey) publica "El Ministerio de Justicia y Derechos
+    Humanos creo un Grupo de Trabajo Sectorial... revisar la normativa vigente en materia de
+    criminalidad..." con "Fuente: Ministerio Publico - Distrito Fiscal de Ancash" → el CUERPO de la
+    noticia no menciona ningun hecho especifico de Ancash/Huarmey, es una resolucion ministerial de
+    alcance nacional (publicada en El Peruano) → cliente="Ninguno (Coyuntura Nacional)",
+    departamento="NACIONAL" (NUNCA "Antamina"/"ANCASH HUARMEY" solo porque la pagina/fuente lo redifundio
+    desde ahi).
 
   ⚠️ SESGO DE BUNDLE: esto aplica INCLUSO SI la pagina normalmente publica de una zona de cliente. Si el TEXTO nombra un lugar real DISTINTO a esa zona habitual, usa ESE lugar real — NUNCA fuerces el departamento habitual del bundle encima de un lugar ya identificado en el texto. NO es un caso aislado, pasa con cualquier bundle:
     - Bundle de Ancash publica "REPORTAN BALACERA EN EL RIMAC... Jr. Atahualpa y Pasaje Los Descalzos" — "Rimac" es distrito de LIMA (Metropolitana), no de Ancash → departamento=LIMA, provincia=LIMA, distrito=RIMAC → por REGLA 6 esto es IGNORAR, NUNCA Antamina/Huarmey.
@@ -217,6 +240,23 @@ REGLA 9 — EMPRESA CLIENTE NOMBRADA EXPLICITAMENTE: mínimo ALRT y agregar a pa
   Agro Sur (solo ICA, NUNCA Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY FARMS, SUN FRUITS, VANGUARD, RVR, UVICA, CAMPOS DEL SUR, DON LUIS, DON RICARDO, AGROMIGIVA.
   Agro Norte (La Libertad/costa): CASA GRANDE, DANPER, MISSION, HORTIFRUT, GREEN PERU, HASS PERU, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA FRUIT, LAREDO, ADAS, CAMPO ANDINO.
 
+  ⚠️ EXCEPCION OBLIGATORIA — RANKINGS/ESTADISTICAS NACIONALES QUE SOLO LISTAN A LA EMPRESA:
+  Si el cliente aparece SOLO como parte de un ranking, lista o estadistica de ALCANCE NACIONAL (ej.
+  "top exportadoras mineras", "empresas que mas pagaron canon", "principales productoras de cobre",
+  informes de SUNAT/MINEM/comex/gremios sobre el sector completo) — JUNTO A OTRAS EMPRESAS NO
+  clientes, SIN que el texto describa un HECHO/EVENTO que le esta pasando especificamente a esa
+  empresa en un lugar — esto NO es REGLA 9, es REGLA 7c-6 (economia nacional): usar SIEMPRE
+  cliente="Ninguno (Coyuntura Nacional)", departamento="NACIONAL", provincia="NACIONAL", distrito="".
+  NUNCA inventar un departamento/provincia/distrito real (ej. "ANCASH HUARMEY") para estos casos SOLO
+  porque sabes donde opera la empresa en la realidad — si el TEXTO no lo dice, no existe para REGLA 1/8.
+    Ej: "Antamina, Cerro Verde y Southern Peru lideran exportaciones mineras: sector crece 49.7%...
+    Las 18 empresas exportaron US$26,001 millones..." → cliente="Ninguno (Coyuntura Nacional)",
+    departamento="NACIONAL" (NO "Antamina"/"ANCASH HUARMEY" — es una nota de coyuntura economica
+    nacional que solo cita cifras de varias mineras, no un hecho que le paso a Antamina en un lugar).
+  SI aplica REGLA 9 normal (asignar la empresa + su ubicacion real conocida) cuando el texto describe
+  un hecho CONCRETO de esa empresa aunque no repita la ubicacion en cada oracion (ej. "Antamina invierte
+  en nuevo programa de reforestacion" — sigue siendo un hecho propio de Antamina, no un ranking).
+
 REGLA 10 — SEGURIDAD Y DELINCUENCIA: LISTA CERRADA DE DELITOS. Dentro de "Seguridad y delincuencia" SOLO cuentan estos — cualquier otro delito/incidente policial, por llamativo que suene → IGNORAR:
   HOMICIDIO, EXTORSION, HURTO, ROBO, CONTRABANDO, RECEPTACION, TIAF (tenencia ilegal de armas), TID (tráfico ilícito de drogas), USURPACION, MINERIA ILEGAL, ESTAFA, SECUESTRO.
 
@@ -251,6 +291,10 @@ NIVELES (resumen operativo — complementa REGLA 10):
   de estos temas llegó hasta aquí es un caso límite: al no tener el detalle completo, revisa igual
   con criterio y usa IGNORAR si aplica).
   También: personas desaparecidas (búsquedas/hallazgos, ver REGLA 10); violación/agresión sexual sin relación directa a un cliente (ver REGLA 10).
+  ⚠️ EXCEPCIÓN — OBRAS/TRABAJOS DE AGUA EN ZONAS AGRO (Pisco, La Libertad, Agro Sur Ica): el agua es
+  crítica para los clientes agroindustriales — obras, trabajos, empalmes, ampliación o mantenimiento
+  de tuberías/redes de agua potable o riego en estas zonas SÍ son relevantes (mínimo INFO), aunque no
+  haya protesta ni conflicto de por medio. NO es "servicio básico rutinario sin valor" en estas zonas.
 
 CLIENTES VALIDOS (usar EXACTAMENTE estos nombres, CON tildes donde corresponde):
 ⚠️ Las descripciones abajo (rubro/zona) son SOLO contexto de a qué se dedica cada cliente — NO un criterio de asignación por tema. El cliente se determina ÚNICAMENTE por la UBICACIÓN real extraída del texto, nunca porque el TEMA coincide con el rubro de un cliente.
