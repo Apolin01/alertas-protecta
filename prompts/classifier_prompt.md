@@ -137,6 +137,14 @@ REGLA 1 — ESTRUCTURA OBLIGATORIA DE UBICACIÓN:
   que ahi opera la empresa. Ej: noticia sobre una funcionaria de Antamina exponiendo en un panel/
   conferencia sin mencionar lugar → departamento=ANCASH, provincia=ANCASH, distrito=ANCASH (NUNCA
   HUARMEY inventado).
+  ⚠️ MISMA REGLA si se menciona un lugar pero NO estas seguro de a que provincia/distrito pertenece
+  (ej. un caserio, anexo o centro poblado que no reconoces con certeza — Carhuayoc, Yanacancha, Ayash,
+  Juprog, Huaripampa, Pichiu son ejemplos de zonas cercanas a la mina, NO de la provincia Huarmey):
+  usa provincia=departamento en vez de ADIVINAR una provincia/distrito especifico. NO asumas que
+  cualquier lugar relacionado a Antamina esta en Huarmey — Huarmey es SOLO su propia provincia
+  (puerto/costa), NO es la provincia de la mina en si. Ante la duda entre "no se a que provincia
+  pertenece este lugar" vs "supongo que es Huarmey porque es donde opera Antamina" — SIEMPRE la
+  primera opcion (provincia=ANCASH, no HUARMEY).
 
 REGLA 2 — EXTRACCIÓN DE DISTRITO (ES LO MÁS IMPORTANTE):
   El DISTRITO es el nivel administrativo MÁS ESPECÍFICO (pueblo, localidad, comunidad, anexo, rondas).

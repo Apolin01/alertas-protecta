@@ -16,9 +16,6 @@ from config import Config
 
 log = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────
-# ESTADISTICAS DEL PRE-FILTRO IA (MODO SOMBRA) — ver pre_filtro_ia()
-# ─────────────────────────────────────────────────────────────
 _prefiltro_stats = Counter()
 
 
@@ -52,12 +49,6 @@ def registrar_prefiltro_resultado(decision: str, nivel: str) -> None:
             f"el clasificador completo dio nivel={nivel} — se habria perdido esta alerta"
         )
 
-# ─────────────────────────────────────────────────────────────
-# PRE-FILTRO DE RUIDO — evita gastar tokens de IA en texto que
-# el propio prompt ya manda a IGNORAR de forma inequivoca
-# (ver seccion "IGNORAR — RUIDO LOCAL SIN VALOR OPERACIONAL").
-# Solo patrones de alta precision: si hay duda, se deja pasar a la IA.
-# ─────────────────────────────────────────────────────────────
 _RUIDO_EVIDENTE_RE = re.compile(
     r"""
     convocatoria\s+(cas|laboral)|bolsa\s+de\s+trabajo|se\s+busca\s+personal|
@@ -257,6 +248,24 @@ def fix_provincia_by_distrito(alert: dict, config=None) -> dict:
     return alert
 
 
+def fix_antamina_anexos(alert: dict) -> dict:
+    """Corrige provincia=HUARI cuando el distrito es un caserio/anexo conocido
+    de la zona de la mina Antamina (Carhuayoc, Ayash, Juprog, Huaripampa,
+    Pichiu, Yanacancha) — estos no son distritos oficiales asi que
+    fix_provincia_by_distrito() no los reconoce, y la IA a veces les pone
+    provincia="HUARMEY" por error (confunde la zona operativa con el puerto)."""
+    dept = (alert.get("departamento") or "").upper().strip()
+    dist = (alert.get("distrito") or "").upper().strip()
+    prov = (alert.get("provincia") or "").upper().strip()
+    if dept == "ANCASH" and dist in ANTAMINA_ANEXOS_HUARI and prov != "HUARI":
+        log.info(
+            f"Provincia corregida (anexo de Antamina): IA dijo '{prov}' pero "
+            f"'{dist}' es zona de Huari, San Marcos → provincia='HUARI'"
+        )
+        alert["provincia"] = "HUARI"
+    return alert
+
+
 # ─────────────────────────────────────────────────────────────
 # MAPA DURO: DEPARTAMENTO → CLIENTE CORRECTO
 # ─────────────────────────────────────────────────────────────
@@ -275,6 +284,15 @@ ANCASH_AIO_DISTRITOS = {
 }
 
 HUANUCO_AIO_DISTRITOS = {"LLATA"}
+
+# Caserios/anexos criticos del entorno de Antamina (zona de la mina, distrito
+# SAN MARCOS, provincia HUARI) — NO son distritos oficiales del INEI, asi que
+# fix_provincia_by_distrito() (que solo conoce distritos reales) no los
+# reconoce y la IA a veces les pone provincia="HUARMEY" por error (confunde
+# la zona operativa/AIO con el puerto de Huarmey). Se corrigen a mano aqui.
+ANTAMINA_ANEXOS_HUARI = {
+    "CARHUAYOC", "AYASH", "JUPROG", "HUARIPAMPA", "PICHIU", "YANACANCHA",
+}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -328,6 +346,15 @@ SEGUIMIENTO_POSTERIOR_TERMS = (
 MUERTE_VIOLENTA_TERMS = (
     "ASESINAT", "ASESIN", "HOMICIDIO", "FEMINICID", "SICARIATO",
 )
+
+AGUA_INFRAESTRUCTURA_TERMS = (
+    "PRESA", "RESERVORIO", "REPRESA", "TUBERIA", "TUBERÍA", "TUBERIAS", "TUBERÍAS",
+    "RIEGO", "IRRIGACION", "IRRIGACIÓN", "CANAL DE REGADIO", "CANAL DE REGADÍO",
+    "RED DE AGUA", "ABASTECIMIENTO DE AGUA", "AGUA POTABLE", "EMPALME DE TUBERIAS",
+    "EMPALME DE TUBERÍAS", "PROYECTO DE AGUA", "OBRA DE AGUA", "POZO DE AGUA",
+)
+
+AGUA_INFRAESTRUCTURA_DEPTOS = {"ICA", "LA LIBERTAD"}
 
 FAUNA_TERMS = (
     "FAUNA", "FAUNA SILVESTRE", "ANIMAL SILVESTRE", "SERFOR",
@@ -692,6 +719,7 @@ class AlertClassifier:
 
             alert = fix_dept_by_city(alert, self.config)
             alert = fix_provincia_by_distrito(alert, self.config)
+            alert = fix_antamina_anexos(alert)
 
             if not is_lima_valida(alert):
                 alert["nivel"]  = "IGNORAR"
@@ -827,6 +855,22 @@ class AlertClassifier:
                     f"'{alert.get('titulo')}' {alert.get('nivel')} → IGNORAR"
                 )
                 alert["nivel"] = "IGNORAR"
+
+            # Red de seguridad: obras/trabajos de agua en zonas agro (Pisco,
+            # La Libertad, Agro Sur Ica) — el agua es critica para estos
+            # clientes, pero la instruccion en el prompt no siempre se sigue.
+            # No depende de que la IA haya aplicado bien esa excepcion.
+            dept_agua_check = (alert.get("departamento") or "").upper().strip()
+            if (
+                alert.get("nivel") == "IGNORAR"
+                and dept_agua_check in AGUA_INFRAESTRUCTURA_DEPTOS
+                and any(t in texto_completo for t in AGUA_INFRAESTRUCTURA_TERMS)
+            ):
+                log.info(
+                    f"Filtro agua/infraestructura agro ({dept_agua_check}): "
+                    f"'{alert.get('titulo')}' IGNORAR → INFO"
+                )
+                alert["nivel"] = "INFO"
 
             if any(
                 t in texto_completo or t in subcateg or t in kws_upper
