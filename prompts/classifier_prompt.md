@@ -204,6 +204,7 @@ REGLA 4 — UBICACION MANDA, NO LA FUENTE. La página que publica NO determina c
   ⚠️ SESGO DE BUNDLE: esto aplica INCLUSO SI la pagina normalmente publica de una zona de cliente. Si el TEXTO nombra un lugar real DISTINTO a esa zona habitual, usa ESE lugar real — NUNCA fuerces el departamento habitual del bundle encima de un lugar ya identificado en el texto. NO es un caso aislado, pasa con cualquier bundle:
     - Bundle de Ancash publica "REPORTAN BALACERA EN EL RIMAC... Jr. Atahualpa y Pasaje Los Descalzos" — "Rimac" es distrito de LIMA (Metropolitana), no de Ancash → departamento=LIMA, provincia=LIMA, distrito=RIMAC → por REGLA 6 esto es IGNORAR, NUNCA Antamina/Huarmey.
     - Bundle de Cajamarca (Bechtel/Newmont) publica "#CASTILLA — TRAGEDIA: TRES MUEREN... distrito de Castilla" (otra version del mismo hecho trae hashtag #Piura explicito) — "Castilla" es distrito de PIURA, no existe en Cajamarca. La IA incluso inventó "en Castilla, Cajamarca" en su propio resumen — el texto original NUNCA dice Cajamarca. Correcto: departamento=PIURA → IGNORAR (Piura no tiene cliente).
+    - Pagina "Contrapunto Ancash" (el NOMBRE de la pagina dice Ancash) publica "#TRUJILLO 🛑EMPRESARIO RESPONDE A BALAZOS A EXTORSIONADORES..." — el texto tiene el hashtag #TRUJILLO explicito al inicio. Trujillo es LA LIBERTAD, no Ancash — usar departamento=LA LIBERTAD, cliente="Clientes Norte". NUNCA "ANCASH"/"Antamina"/"Huarmey" solo porque el NOMBRE de la pagina dice Ancash — el nombre de la pagina NUNCA es evidencia de ubicacion (ver arriba), incluso cuando hay un hashtag de ubicacion real correcto justo en el texto que se esta ignorando.
 
   ⚠️ PESCA NACIONAL: anuncios de PRODUCE/IMARPE (vedas, cuotas, evaluaciones cientificas, temporadas de anchoveta) que cubren TODO el litoral o no mencionan puerto/zona especifica → NUNCA "Pisco" solo porque el tema es pesca. "Pisco" no es tema de REGLA 7c → va a IGNORAR por REGLA 8, NO a "Ninguno (Coyuntura Nacional)" ni a "Pisco".
     - "Produce autoriza evaluación de la anchoveta: participarán..." (sin mencionar Pisco/Paracas) → IGNORAR, departamento="".
@@ -242,6 +243,14 @@ REGLA 7 — "Ninguno (Coyuntura Nacional)":
         Ej: "¡ABOGADO DE NALDY: LA BELLA LUZ PODRÍA SER MULTADA CON HASTA 50 UIT!" → IGNORAR, aunque mencione "multa" e "investigacion".
 
 REGLA 8 — Sin ubicación clara reconocible de zonas de operación → IGNORAR. No inventar ubicaciones.
+  ⚠️ UN HASHTAG SOLO NO ES SUFICIENTE: si la ÚNICA mención de una zona es un hashtag (ej. "#Huarmey",
+  "#Trujillo") y el CUERPO del texto (el hecho narrado) no dice nada más sobre esa zona ni describe
+  donde ocurrio realmente — sin otro detalle que lo confirme — trátalo como ubicación NO confiable:
+  usa provincia=departamento (REGLA 1) en vez de fijar el distrito/provincia solo por el hashtag, y si
+  ni el departamento es reconocible con el resto del texto → IGNORAR por falta de información. Un
+  hashtag SÍ es evidencia válida cuando el CUERPO del texto tiene contenido real del hecho (ej. "#Trujillo
+  empresario responde a balazos a extorsionadores..." — ahí el hashtag coincide con un hecho real narrado,
+  no es la única información).
 
 REGLA 9 — EMPRESA CLIENTE NOMBRADA EXPLICITAMENTE: mínimo ALRT y agregar a palabras_clave. Protesta/bloqueo/accidente/denuncia CONTRA ella → CRIT.
   Minería: ANTAMINA, COMPAÑIA MINERA ANTAMINA, YANACOCHA, MINERA YANACOCHA, NEWMONT, CONGA, BECHTEL.

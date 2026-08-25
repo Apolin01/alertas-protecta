@@ -196,6 +196,33 @@ def fix_dept_by_city(alert: dict, config=None) -> dict:
     return alert
 
 
+def fix_dept_by_hashtag(alert: dict, texto: str) -> dict:
+    """Red de seguridad: si el texto trae un hashtag de ciudad conocida
+    (#TRUJILLO, #CASTILLA, etc.) que NO coincide con el departamento que puso
+    la IA, corrige. Esto pasa cuando la IA ignora el hashtag real del texto y
+    usa en su lugar el nombre de la pagina que publico (prohibido por REGLA 4,
+    pero el prompt solo no siempre alcanza) — ej. pagina "Contrapunto Ancash"
+    publica un hecho de #TRUJILLO y la IA le pone Ancash/Huarmey igual."""
+    if not texto:
+        return alert
+    texto_norm = _strip_accents(texto.upper())
+    dept_actual = (alert.get("departamento") or "").upper().strip()
+
+    hashtag_ciudades = re.findall(r"#([A-ZÀ-Ú]+)", texto_norm)
+    for tag in hashtag_ciudades:
+        dept_correcto = CITY_TO_DEPT.get(tag)
+        if dept_correcto and dept_correcto != dept_actual:
+            log.info(
+                f"Departamento corregido por hashtag: IA dijo '{dept_actual}' "
+                f"pero el texto trae '#{tag}' → '{dept_correcto}'"
+            )
+            alert["departamento"] = dept_correcto
+            alert["provincia"] = dept_correcto
+            alert["distrito"] = tag
+            break
+    return alert
+
+
 def fix_provincia_by_distrito(alert: dict, config=None) -> dict:
     """Corrige la provincia (y la ortografia del distrito) cuando el
     departamento ya esta bien pero el distrito pertenece a OTRA provincia
@@ -717,6 +744,22 @@ class AlertClassifier:
             if alert.get("rubro") not in self.config.RUBROS_VALIDOS:
                 alert["rubro"] = self.config.get_rubro(alert.get("cliente", ""))
 
+            # Correccion por contenido: clientes como "Clientes Norte"/"Clientes Sur"
+            # agrupan varias empresas agro por defecto ("Agroindustria"), pero dentro
+            # de esa misma zona geografica tambien puede pasar un hecho de mineria
+            # (ej. Pataz, La Libertad — mineria informal). Si el texto nombra
+            # explicitamente mina/minero/mineria, el rubro real es Mineria, sin
+            # importar el rubro por defecto del grupo de cliente.
+            texto_rubro = _strip_accents((text or "").upper())
+            if re.search(r"\bMINA\b|\bMINAS\b|\bMINER[OA]\b|\bMINEROS\b|MINERIA", texto_rubro):
+                if alert.get("rubro") != "Minería":
+                    log.info(
+                        f"Rubro corregido por contenido: '{alert.get('rubro')}' → "
+                        f"'Minería' (texto menciona mina/minero/mineria)"
+                    )
+                    alert["rubro"] = "Minería"
+
+            alert = fix_dept_by_hashtag(alert, text)
             alert = fix_dept_by_city(alert, self.config)
             alert = fix_provincia_by_distrito(alert, self.config)
             alert = fix_antamina_anexos(alert)

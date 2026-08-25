@@ -318,6 +318,13 @@ def process_page(page_name, config, classifier, dedup,
                         f"dept={alert.get('departamento','?')} sub={alert.get('subcategoria','?')}"
                     )
                     continue
+                # Se registra COMO enviado inmediatamente, en el mismo lock que el
+                # chequeo — si esto se hiciera despues de formatear/encolar (como
+                # antes), dos posts casi simultaneos del mismo hecho (uno por RSS
+                # y otro por webhook, o dos webhooks seguidos) pueden pasar ambos
+                # el chequeo de duplicado antes de que cualquiera se registre,
+                # y se mandan los dos. Cerrar esta ventana evita el duplicado.
+                dedup.mark_alert_sent(alert)
             except DBUnavailable:
                 log.warning(f"[{page_name}] BD de dedup caida — alerta se envia sin chequeo de duplicado")
 
@@ -353,9 +360,6 @@ def process_page(page_name, config, classifier, dedup,
         for group in groups:
             new_id = queue.push(group, wa_msg, image_url, alert)
             queued_ids.append(new_id)
-
-        with _dedup_lock:
-            dedup.mark_alert_sent(alert)
 
         if getattr(config, "SHEETS_ENABLED", False):
             sheets_row = formatter.format_sheets_row(alert, post, config)
@@ -474,6 +478,10 @@ def run_forever():
                 if dedup.is_duplicate_alert(alert):
                     log.info(f"[WEBHOOK] Duplicado detectado")
                     return
+                # Registrado como enviado en el mismo lock que el chequeo — ver
+                # comentario en process_page() sobre la ventana de carrera que
+                # esto cierra (dos posts casi simultaneos del mismo hecho).
+                dedup.mark_alert_sent(alert)
             except DBUnavailable:
                 log.warning("[WEBHOOK] BD de dedup caida — alerta se envia sin chequeo de duplicado")
 
@@ -495,9 +503,6 @@ def run_forever():
         for group in groups:
             new_id = queue.push(group, wa_msg, image_url, alert)
             queued_ids.append(new_id)
-
-        with _dedup_lock:
-            dedup.mark_alert_sent(alert)
 
         if getattr(config, "SHEETS_ENABLED", False):
             sheets_row = formatter.format_sheets_row(alert, post, config)
