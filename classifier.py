@@ -223,6 +223,33 @@ def fix_dept_by_hashtag(alert: dict, texto: str) -> dict:
     return alert
 
 
+_GORE_DEPTOS = ("LA LIBERTAD", "ANCASH", "CAJAMARCA", "ICA", "HUANUCO", "PASCO")
+
+
+def fix_nacional_by_gore_mention(alert: dict, texto: str) -> dict:
+    """Red de seguridad: si la IA puso departamento=NACIONAL pero el texto
+    menciona explicitamente "Gobierno Regional [zona]" o "GORE [zona]" — la
+    noticia es sobre ESA region gestionando algo (a veces con el Gobierno
+    Nacional), no una politica nacional generica. NO se dispara con solo
+    mencionar el nombre del departamento suelto (ej. cifras de votos en
+    elecciones, REGLA 0), solo con la frase "Gobierno Regional"/"GORE" + zona,
+    que es una señal fuerte e inequivoca de que el sujeto es esa region."""
+    if not texto or (alert.get("departamento") or "").upper().strip() != "NACIONAL":
+        return alert
+    texto_norm = _strip_accents(texto.upper())
+    for depto in _GORE_DEPTOS:
+        if re.search(rf"GOBIERNO REGIONAL (DE )?{depto}|GORE {depto.split()[-1]}", texto_norm):
+            log.info(
+                f"Departamento corregido: IA dijo 'NACIONAL' pero el texto "
+                f"menciona 'Gobierno Regional {depto}' → '{depto}'"
+            )
+            alert["departamento"] = depto
+            alert["provincia"] = depto
+            alert["distrito"] = depto
+            break
+    return alert
+
+
 def fix_provincia_by_distrito(alert: dict, config=None) -> dict:
     """Corrige la provincia (y la ortografia del distrito) cuando el
     departamento ya esta bien pero el distrito pertenece a OTRA provincia
@@ -382,6 +409,25 @@ AGUA_INFRAESTRUCTURA_TERMS = (
 )
 
 AGUA_INFRAESTRUCTURA_DEPTOS = {"ICA", "LA LIBERTAD"}
+
+# REGLA 9: CRIT es para protestas/bloqueos/denuncias CONTRA la empresa cliente.
+# Una protesta social generica (ej. marcha pidiendo justicia por un homicidio,
+# sin relacion a ningun cliente) no deberia ser CRIT solo porque hay un muerto
+# de por medio — el "paro/protesta" en si mismo no afecta a ninguna empresa.
+PROTESTA_TERMS = (
+    "PROTESTA", "PROTESTAN", "MARCHA", "PLANTON", "PLANTÓN",
+    "MOVILIZACION", "MOVILIZACIÓN", "PARO",
+)
+
+EMPRESA_CLIENTE_TERMS = (
+    "ANTAMINA", "YANACOCHA", "NEWMONT", "BECHTEL", "CONGA",
+    "ATHOS", "CHAPI", "AGROKASA", "RIACHUELO", "SAFRESCO", "SAFCO",
+    "FAMILY FARMS", "SUN FRUITS", "VANGUARD", "RVR", "UVICA",
+    "CAMPOS DEL SUR", "DON LUIS", "DON RICARDO", "AGROMIGIVA",
+    "CASA GRANDE", "DANPER", "MISSION", "HORTIFRUT", "GREEN PERU",
+    "HASS PERU", "CAMPOSOL", "GIDDINGS", "TALSA", "WESTFALIA FRUIT",
+    "LAREDO", "ADAS", "CAMPO ANDINO",
+)
 
 FAUNA_TERMS = (
     "FAUNA", "FAUNA SILVESTRE", "ANIMAL SILVESTRE", "SERFOR",
@@ -759,6 +805,27 @@ class AlertClassifier:
                     )
                     alert["rubro"] = "Minería"
 
+            # Correccion por contenido: hechos de seguridad/militar/policial sin
+            # relacion a ningun rubro especifico (ej. incautacion de municiones,
+            # operativo contra crimen organizado) NO son "Agroindustria" solo
+            # porque el cliente asignado es un grupo agro (Clientes Norte/Sur).
+            SEGURIDAD_SIN_RUBRO_TERMS = (
+                "MUNICION", "MUNICIONES", "ARMAS DE GUERRA", "FUERZAS ARMADAS",
+                "CRIMEN ORGANIZADO", "OPERATIVO MILITAR", "OPERACION MILITAR",
+                "COMANDO CONJUNTO", "EXPLOSIVOS",
+            )
+            if (
+                alert.get("rubro") == "Agroindustria"
+                and any(t in texto_rubro for t in SEGURIDAD_SIN_RUBRO_TERMS)
+                and not re.search(r"AGRO|CULTIVO|COSECHA|RIEGO|EXPORTACION", texto_rubro)
+            ):
+                log.info(
+                    f"Rubro corregido por contenido: 'Agroindustria' → 'Otros' "
+                    f"(texto es de seguridad/militar, sin relacion a agro)"
+                )
+                alert["rubro"] = "Otros"
+
+            alert = fix_nacional_by_gore_mention(alert, text)
             alert = fix_dept_by_hashtag(alert, text)
             alert = fix_dept_by_city(alert, self.config)
             alert = fix_provincia_by_distrito(alert, self.config)
@@ -914,6 +981,23 @@ class AlertClassifier:
                     f"'{alert.get('titulo')}' IGNORAR → INFO"
                 )
                 alert["nivel"] = "INFO"
+
+            # Red de seguridad: PROTESTA/PARO/MARCHA que NO menciona a ninguna
+            # empresa cliente ni una zona critica de operacion (Carhuayoc, Ayash,
+            # etc.) es una protesta social generica — no debe ser CRIT solo
+            # porque el motivo de fondo sea un homicidio u otro hecho grave.
+            # REGLA 9: CRIT es para protestas/bloqueos CONTRA el cliente.
+            if (
+                alert.get("nivel") == "CRIT"
+                and any(t in texto_completo for t in PROTESTA_TERMS)
+                and not any(t in texto_completo for t in EMPRESA_CLIENTE_TERMS)
+                and not any(t in texto_completo for t in ANTAMINA_ANEXOS_HUARI)
+            ):
+                log.info(
+                    f"Filtro protesta generica (sin empresa/zona critica mencionada): "
+                    f"'{alert.get('titulo')}' CRIT → ALRT"
+                )
+                alert["nivel"] = "ALRT"
 
             if any(
                 t in texto_completo or t in subcateg or t in kws_upper

@@ -406,7 +406,7 @@ class AlertFormatter:
 
         # Columnas del SPLIT
         fecha_split     = now_dt.strftime("%d-%m-%y")
-        cat_split       = categoria.replace(" ", "-").upper() if categoria else ""
+        cat_split       = categoria.replace(" ", "-") if categoria else ""
         etiquetas_split = subcategoria.replace(" ", "-").upper() if subcategoria else tags
         id_noticias     = alert.get("titulo", "") or alert.get("resumen_whatsapp", "")
 

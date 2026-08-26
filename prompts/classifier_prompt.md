@@ -33,6 +33,15 @@ CAMPOS DE JUICIO (declara el HECHO segun el CONTEXTO completo, no busques palabr
 - "involucra_muerte": true si una o mas personas murieron en el hecho de fondo — SIN IMPORTAR si esta oracion especifica lo menciona explicitamente (un velorio o pedido de justicia SIGUE siendo true). false si no hay muerte de por medio.
 - "es_muerte_violenta_dolosa": solo relevante si involucra_muerte=true. true si fue intencional/violenta (asesinato, sicariato, feminicidio, bala/arma blanca). false si fue accidental (transito, incendio, ahogamiento, derrumbe, enfermedad, caida).
 - "es_autopromocion_politica_local": true si un candidato (o un tercero en su nombre) promociona su candidatura a cargo LOCAL o REGIONAL, pide el voto o presenta plan de gobierno. SIEMPRE false para ELECCIONES GENERALES/PRESIDENCIALES nacionales (REGLA 0).
+- "rubro": el sector real de la NOTICIA en si misma — NUNCA el rubro tipico del grupo de cliente
+  (ej. "Clientes Norte"/"Clientes Sur" agrupan empresas agro, pero eso NO significa que toda noticia
+  de esa zona sea "Agroindustria"). Si el hecho es de seguridad/delincuencia/militar/policial sin
+  relacion a ningun rubro especifico (ej. incautacion de municiones, operativo contra crimen
+  organizado) → "Otros", NUNCA "Agroindustria" solo porque el cliente asignado es agro. Si es
+  mineria (aunque el cliente sea agro) → "Mineria". Usa "Agroindustria" SOLO si el hecho en si trata
+  de agricultura/agroindustria (cultivos, exportaciones agro, riego, plagas, cosecha, etc.).
+  Ej: "Fuerzas Armadas incautan 2 mil municiones en Pataz" (cliente=Clientes Norte) → rubro="Otros"
+  (NO "Agroindustria" — el hecho es una operacion militar, no tiene nada que ver con agro).
 
 CATEGORIAS (usar EXACTAMENTE estos nombres):
 - Agro-Agua-Medioambiente: agro, agua, medioambiente, inundaciones, sismos, agroindustria
@@ -61,8 +70,8 @@ Preferentes (usar si aplica): DETENCION, HOMICIDIO, SEGURIDAD, AGRO, AGRICULTORE
 - AGRO = agroindustria; AGRICULTORES = pequenos productores con dificultades economicas.
 ⚠️ OBLIGATORIO — no opcional: si el texto NOMBRA a la empresa cliente (o su mina/proyecto/marca) por su nombre propio, ESA PALABRA SIEMPRE va como una de las 3 palabras_clave, sin excepcion, sin importar el nivel ni si la noticia es positiva o negativa para la empresa:
   Mineria: ANTAMINA, YANACOCHA, NEWMONT, BECHTEL, CONGA.
-  Agro Sur (solo ICA, NUNCA Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY-FARMS, SUN-FRUITS, VANGUARD, RVR, UVICA, CAMPOS-DEL-SUR, DON-LUIS, DON-RICARDO.
-  Agro Norte (La Libertad/costa): CASA-GRANDE, DANPER, MISSION, HORTIFRUT, GREEN-PERU, HASS, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA, LAREDO, ADAS, CAMPO-ANDINO.
+  Agro Sur (solo ICA, NUNCA Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY-FARMS, SUN-FRUITS, VANGUARD, RVR, UVICA, CAMPOS-DEL-SUR, DON-LUIS, DON-RICARDO, AGRICOLA-3P, CAMPO-ANDINO.
+  Agro Norte (La Libertad/costa): CASA-GRANDE, DANPER, MISSION, HORTIFRUT, GREEN-PERU, HASS, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA, LAREDO, ADAS.
   (Lista completa por cliente en REGLA 9 — mismo criterio: nombrada explicitamente = siempre en palabras_clave.)
 - Abreviaciones si aparecen literalmente en el texto: CODEHICA, CNDDHH, SEDYS, FETSA, CAMPOSOL, SITECASA-CAMPOSOL, CNUL, CPUL-ICA, STCCI, SUTEP, CGTP, TUAGRAP.
 - ⚠️ OBLIGATORIO: si cae/capturan a una banda/organización/sujetos por CUALQUIER delito de REGLA 10 (drogas/TID, robo, extorsión, etc. — etapa_hecho=DETENCION_CAPTURA), la PRIMERA palabra_clave SIEMPRE es "DETENCION", sin importar la sustancia/delito específico. Ej: "Caen 'Los paqueteros de la pampa' en Chincha con cocaína, marihuana, PBC..." → palabras_clave=["DETENCION", "COCAINA", "MARIHUANA"] (no ["COCAINA","MARIHUANA","PBC"]).
@@ -226,6 +235,15 @@ REGLA 6 — LIMA: solo procesar si menciona EXPLICITAMENTE PARAMONGA o la provin
 
 REGLA 7 — "Ninguno (Coyuntura Nacional)":
   (a) Gobierno central (presidente, congreso, ministerios) anunciando políticas/decisiones que SI afectan una región de operación específica → enrutar a esa región/cliente (Ancash→Antamina, Cajamarca→Bechtel/Newmont).
+      ⚠️ Esto aplica INCLUSO cuando la noticia habla de una gestión/transferencia/negociación CON el
+      Gobierno Nacional, si el sujeto de la noticia es el gobierno REGIONAL de una zona especifica
+      pidiendo/logrando algo PARA esa region — no te dejes engañar por menciones a "Gobierno Nacional"
+      dentro del texto, mira DE QUIEN es la noticia y PARA QUE region es el beneficio.
+      Ej: "GORE logra transferencia de recursos para intervenir 48 puntos criticos ante el Fenomeno
+      El Niño" — fuente "Gobierno Regional La Libertad" (breadcrumb: Gore La Libertad > Noticias),
+      texto dice "gestiones lideradas por la gobernadora [de La Libertad]... ante el Gobierno
+      Nacional" → departamento="LA LIBERTAD", cliente="Clientes Norte" (NO "NACIONAL" — el hecho es
+      La Libertad consiguiendo fondos, no una politica nacional general).
   (b) PROCESO ELECTORAL NACIONAL → ver REGLA 0. Resultados ONPE/JNE, actas, votos, candidatos, encuestas, debates → SIEMPRE NACIONAL, aunque mencionen departamentos en las cifras. NUNCA IGNORAR — mínimo INFO. Solo se ignora si es puro entretenimiento/humor sin información (memes, chistes).
   (c) ALCANCE TEMATICO — SOLO estos temas entran a "Ninguno (Coyuntura Nacional)"; si no encaja en ninguno, NO va a este grupo:
       1. PROTESTAS Y PAROS DE ALCANCE NACIONAL: marchas/paros nacionales, huelgas de gremios nacionales (CGTP, SUTEP, transportistas, agrarios), bloqueos multirregionales.
@@ -254,8 +272,8 @@ REGLA 8 — Sin ubicación clara reconocible de zonas de operación → IGNORAR.
 
 REGLA 9 — EMPRESA CLIENTE NOMBRADA EXPLICITAMENTE: mínimo ALRT y agregar a palabras_clave. Protesta/bloqueo/accidente/denuncia CONTRA ella → CRIT.
   Minería: ANTAMINA, COMPAÑIA MINERA ANTAMINA, YANACOCHA, MINERA YANACOCHA, NEWMONT, CONGA, BECHTEL.
-  Agro Sur (solo ICA, NUNCA Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY FARMS, SUN FRUITS, VANGUARD, RVR, UVICA, CAMPOS DEL SUR, DON LUIS, DON RICARDO, AGROMIGIVA.
-  Agro Norte (La Libertad/costa): CASA GRANDE, DANPER, MISSION, HORTIFRUT, GREEN PERU, HASS PERU, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA FRUIT, LAREDO, ADAS, CAMPO ANDINO.
+  Agro Sur (solo ICA, NUNCA Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY FARMS, SUN FRUITS, VANGUARD, RVR, UVICA, CAMPOS DEL SUR, DON LUIS, DON RICARDO, AGROMIGIVA, AGRICOLA 3P, CAMPO ANDINO.
+  Agro Norte (La Libertad/costa): CASA GRANDE, DANPER, MISSION, HORTIFRUT, GREEN PERU, HASS PERU, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA FRUIT, LAREDO, ADAS.
 
   ⚠️ EXCEPCION OBLIGATORIA — RANKINGS/ESTADISTICAS NACIONALES QUE SOLO LISTAN A LA EMPRESA:
   Si el cliente aparece SOLO como parte de un ranking, lista o estadistica de ALCANCE NACIONAL (ej.
@@ -323,16 +341,16 @@ CLIENTES VALIDOS (usar EXACTAMENTE estos nombres, CON tildes donde corresponde):
 "Antamina" — ANCASH (incluye provincia HUARMEY), HUANUCO, PASCO.
 "Bechtel / Newmont" — CAJAMARCA (todas sus provincias). Empresas: Minera Yanacocha, Newmont, Conga, Bechtel.
 "Pisco" — ICA provincia Pisco, costera pesquera.
-"Agrícola 3P" — LA LIBERTAD.
+"Agrícola 3P" — solo ICA.
 "Agrícola Chapi" — ICA (no Pisco).
-"Campos Andino" — LA LIBERTAD costa norte.
+"Campos Andino" — solo ICA.
 "Campos del Sur" — solo ICA.
 "Don Ricardo" — solo ICA zona sur.
 "Hortifrut" — LA LIBERTAD costa norte.
 "Mission" — LA LIBERTAD costa norte.
 "RVR" — solo ICA zona sur.
-"SunFruits" — LA LIBERTAD costa norte.
-"Vanguard" — ICA / La Libertad.
+"SunFruits" — solo ICA.
+"Vanguard" — solo ICA.
 "Uvica" — ICA zona sur.
 "Clientes Sur" — solo ICA (NUNCA Arequipa, ver REGLA 5).
 "Clientes Norte" — LA LIBERTAD.
