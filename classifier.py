@@ -223,7 +223,7 @@ def fix_dept_by_hashtag(alert: dict, texto: str) -> dict:
     return alert
 
 
-_GORE_DEPTOS = ("LA LIBERTAD", "ANCASH", "CAJAMARCA", "ICA", "HUANUCO", "PASCO")
+_GORE_DEPTOS = ("LA LIBERTAD", "ANCASH", "CAJAMARCA", "ICA", "HUANUCO")
 
 
 def fix_nacional_by_gore_mention(alert: dict, texto: str) -> dict:

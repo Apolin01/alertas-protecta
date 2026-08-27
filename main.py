@@ -324,7 +324,15 @@ def process_page(page_name, config, classifier, dedup,
                 # y otro por webhook, o dos webhooks seguidos) pueden pasar ambos
                 # el chequeo de duplicado antes de que cualquiera se registre,
                 # y se mandan los dos. Cerrar esta ventana evita el duplicado.
-                dedup.mark_alert_sent(alert)
+                # mark_alert_sent() puede AUN ASI rechazar (otro hilo gano la
+                # insercion en el microsegundo entre el chequeo y este insert) —
+                # por eso hay que revisar su resultado, no solo llamarlo.
+                if not dedup.mark_alert_sent(alert):
+                    log.info(
+                        f"[{page_name}] DUPLICADO — perdio la carrera de registro: "
+                        f"dept={alert.get('departamento','?')} sub={alert.get('subcategoria','?')}"
+                    )
+                    continue
             except DBUnavailable:
                 log.warning(f"[{page_name}] BD de dedup caida — alerta se envia sin chequeo de duplicado")
 
@@ -481,7 +489,11 @@ def run_forever():
                 # Registrado como enviado en el mismo lock que el chequeo — ver
                 # comentario en process_page() sobre la ventana de carrera que
                 # esto cierra (dos posts casi simultaneos del mismo hecho).
-                dedup.mark_alert_sent(alert)
+                # Revisar el resultado: puede rechazar igual si otro hilo gano
+                # la insercion en el microsegundo entre el chequeo y este insert.
+                if not dedup.mark_alert_sent(alert):
+                    log.info(f"[WEBHOOK] Duplicado — perdio la carrera de registro")
+                    return
             except DBUnavailable:
                 log.warning("[WEBHOOK] BD de dedup caida — alerta se envia sin chequeo de duplicado")
 

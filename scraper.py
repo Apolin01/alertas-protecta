@@ -22,11 +22,6 @@ log = logging.getLogger(__name__)
 
 SESSION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fb_session")
 
-
-# ── Worker thread dedicado para Playwright ────────────────────
-# Playwright sync API lanza error si hay un asyncio loop activo.
-# Este hilo no tiene loop, así que sync Playwright funciona bien.
-
 class _Worker:
     def __init__(self):
         self._q = _queue.Queue()

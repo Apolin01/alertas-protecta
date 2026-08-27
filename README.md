@@ -2,22 +2,24 @@
 
 Sistema automatizado que monitorea noticias vía **webhooks en tiempo real** y **polling RSS**, clasifica con IA, deduplica inteligentemente y envía alertas a WhatsApp por cliente/región. Registra todo en Google Sheets.
 
-**Versión:** 2.2  
-**Última actualización:** 02 de Junio, 2026  
+**Versión:** 3.0  
+**Última actualización:** 26 de Agosto, 2026  
 **Estado:** Producción
 
 ---
 
 ## Características Principales
 
-- **Webhooks en Tiempo Real** — Notificaciones inmediatas desde rss.app (< 1 segundo de latencia)
+- **Webhooks en Tiempo Real** — Notificaciones inmediatas desde rss.app, con modo directo (ngrok) o modo relay (servicio externo tipo Railway, sin depender de un túnel local)
 - **Polling RSS Fallback** — Consulta cada 5 minutos como respaldo
-- **Deduplicación 7 Niveles** — URL exacta, content hash, firma de evento, Jaccard título, Levenshtein, Jaccard descripción, IA semántica
+- **Clasificación en dos etapas** — pre-filtro barato (`prompts/pre_filtro_prompt.md`, con razonamiento breve) descarta ruido evidente antes del clasificador completo (`prompts/classifier_prompt.md`), bajando el costo de OpenAI sin perder alertas reales
+- **Deduplicación 7 Niveles** — URL exacta, content hash, firma de evento, Jaccard título, Levenshtein, Jaccard descripción, IA semántica — con chequeo y registro atómico (evita duplicados por condición de carrera en posts casi simultáneos)
 - **Clasificación IA** — OpenAI GPT-4o-mini (proveedor activo)
-- **Multi-Cliente** — 6 bundles RSS configurados (Antamina, Bechtel/Newmont, Clientes Sur, Clientes Norte, Pisco, Coyuntura Nacional)
+- **Multi-Cliente** — 6 bundles RSS + 17 clientes válidos (ver tabla abajo)
 - **Integración WhatsApp** — Bridge Node.js local (whatsapp-web.js)
-- **Google Sheets** — Registro histórico de todas las alertas
-- **PostgreSQL** — BD persistente para deduplicación avanzada y cola de alertas
+- **Google Sheets** — Registro histórico de todas las alertas (RSS y webhook)
+- **SQLite local** — Deduplicación y cola de alertas en `data/dedup.db` / `data/queue.db`, sin depender de un servidor de base de datos externo ni de sus cuotas
+- **Resiliente a caídas de infraestructura** — si la base de datos local falla, el sistema sigue enviando alertas (sin dedup temporalmente) en vez de caerse por completo
 
 ---
 
@@ -50,11 +52,18 @@ Sistema automatizado que monitorea noticias vía **webhooks en tiempo real** y *
              │
              ▼
       ┌─────────────────┐
+      │ PRE-FILTRO IA   │  Barato (~2.5K tokens), con
+      │ RUIDO/POSIBLE   │  razonamiento breve — descarta
+      └────────┬────────┘  turismo/empleo/deportes/etc.
+               │ POSIBLE
+               ▼
+      ┌─────────────────┐
       │ CLASIFICADOR    │
       │ (OpenAI)        │
       │ - Nivel         │
       │ - Cliente       │
       │ - Ubicación     │
+      │ - Rubro         │
       │ - 3 Keywords    │
       └────────┬────────┘
              │
@@ -93,26 +102,33 @@ alertas-protecta/
 ├── CORE
 │   ├── main.py                 # Orquestador + scheduler
 │   ├── config.py               # Configuración central
-│   ├── classifier.py           # Clasificación IA (OpenAI)
+│   ├── classifier.py           # Pre-filtro + clasificación IA (OpenAI) + filtros duros
 │   ├── formatter.py            # Formato WhatsApp / Sheets
-│   ├── deduplicator.py         # Dedup 7 niveles (PostgreSQL)
+│   ├── deduplicator.py         # Dedup 7 niveles (SQLite local)
 │   ├── router.py               # Routing cliente → grupo
+│   │
+│   ├── PROMPTS
+│   │   ├── prompts/classifier_prompt.md   # Prompt principal (nivel, cliente, ubicación, rubro...)
+│   │   └── prompts/pre_filtro_prompt.md   # Prompt barato de descarte (RUIDO/POSIBLE)
 │   │
 │   ├── FUENTES
 │   │   ├── rss_fetcher.py      # RSS polling (rss.app)
 │   │   ├── webhook_handler.py  # Procesa webhooks entrantes
-│   │   └── webhook_server.py   # Flask server (puerto 5000)
+│   │   ├── webhook_server.py   # Flask server (modo directo) + poller (modo relay)
+│   │   └── webhook_relay/      # Servicio externo opcional (Railway) sin logica de negocio —
+│   │                           # recibe el webhook y tu PC lo va a buscar por polling
 │   │
 │   └── ENVÍO
 │       ├── sender_whatsapp.py  # WhatsApp bridge sender
 │       ├── sender_sheets.py    # Google Sheets logging
-│       └── alert_queue.py      # Cola persistente (PostgreSQL)
+│       └── alert_queue.py      # Cola persistente (SQLite local)
 │
 ├── CONFIGURACIÓN
 │   ├── .env                    # Variables de entorno (no commitear)
 │   ├── .env.example            # Plantilla para .env
 │   ├── requirements.txt        # Dependencias Python
 │   ├── Procfile                # Heroku deployment
+│   ├── start_autonomous.ps1    # Supervisor (arranca/reinicia bridge + main.py)
 │   ├── run_system.bat          # Script Windows
 │   ├── run_system.ps1          # Script PowerShell
 │   │
@@ -120,6 +136,11 @@ alertas-protecta/
 │       ├── server.js
 │       ├── package.json
 │       └── Dockerfile
+│
+├── DATOS (local, no commitear — ver .gitignore)
+│   └── data/
+│       ├── dedup.db            # SQLite — deduplicación (posts vistos, alertas enviadas)
+│       └── queue.db            # SQLite — cola de alertas pendientes de envío
 │
 ├── DOCUMENTACIÓN
 │   ├── README.md               # Este archivo
@@ -137,8 +158,8 @@ alertas-protecta/
 
 ### 1. Requisitos
 - Python 3.11+
-- PostgreSQL (Neon, Railway, o local)
 - Node.js 18+ (para WhatsApp bridge)
+- No requiere base de datos externa — usa SQLite local automáticamente
 
 ### 2. Clonar y Configurar
 ```bash
@@ -156,12 +177,14 @@ cp .env.example .env
 
 # Editar .env con tus valores reales:
 OPENAI_API_KEY=sk-...
-DATABASE_URL=postgresql://user:pass@host/db
 RSS_API_KEY=...
 RSS_API_SECRET=...
 BRIDGE_TOKEN=tu_token_secreto
 WEBHOOKS_ENABLED=true
 WEBHOOK_PORT=5000
+# (opcional) modo relay en vez de ngrok — ver sección Webhooks
+# WEBHOOK_RELAY_URL=https://tu-relay.up.railway.app
+# WEBHOOK_RELAY_TOKEN=el_mismo_secreto_del_relay
 ```
 
 ### 4. Iniciar Sistema
@@ -189,19 +212,23 @@ CICLO 1 — 24-05-2026 08:00 PE
 | Variable | Requerida | Descripción |
 |----------|-----------|-------------|
 | `OPENAI_API_KEY` | Sí | Clave para clasificación IA |
-| `DATABASE_URL` | Sí | Conexión PostgreSQL |
 | `RSS_API_KEY` | Sí | Clave de API rss.app |
 | `RSS_API_SECRET` | Sí | Secreto de API rss.app |
 | `BRIDGE_TOKEN` | Sí | Token de autenticación del bridge WhatsApp |
 | `BRIDGE_URL` | No | URL del bridge (default: `http://localhost:3000`) |
-| `WEBHOOKS_ENABLED` | No | Activar servidor webhook (default: `true`) |
-| `WEBHOOK_PORT` | No | Puerto del servidor webhook (default: `5000`) |
-| `WEBHOOK_SECRET` | No | Secreto HMAC para validar webhooks de rss.app |
+| `WEBHOOKS_ENABLED` | No | Activar recepción de webhooks (default: `true`) |
+| `WEBHOOK_HOST` / `WEBHOOK_PORT` | No | Host/puerto del servidor local en modo directo (default: `0.0.0.0` / `5000`) |
+| `WEBHOOK_SECRET` | No | Secreto HMAC para validar webhooks de rss.app (modo directo) |
+| `WEBHOOK_RELAY_URL` | No | URL del servicio relay externo (ej. Railway) — si está seteada, usa **modo relay** (polling) en vez de exponer un servidor local con ngrok |
+| `WEBHOOK_RELAY_TOKEN` | Si `WEBHOOK_RELAY_URL` | Token compartido con el relay (debe coincidir con `RELAY_TOKEN` del servicio `webhook_relay/`) |
+| `WEBHOOK_RELAY_POLL_SECONDS` | No | Cada cuántos segundos se consulta el relay (default: `5`) |
 | `WHATSAPP_PROVIDER` | No | `bridge` o `simulate` (default: `bridge`) |
 | `USE_RSS_FEED` | No | Usar RSS en lugar de scraper (default: `true`) |
 | `SHEETS_ENABLED` | No | Activar logging en Google Sheets (default: `false`) |
 | `SPREADSHEET_ID` | Si SHEETS_ENABLED | ID del Google Sheets |
 | `HEARTBEAT_URL` | No | URL de watchdog externo (UptimeRobot, etc.) |
+
+> `DATABASE_URL` / PostgreSQL **ya no se usa** — la deduplicación y la cola de alertas viven en SQLite local (`data/dedup.db`, `data/queue.db`), sin configuración adicional.
 
 ---
 
@@ -211,12 +238,20 @@ CICLO 1 — 24-05-2026 08:00 PE
 
 | Cliente | Bundle ID | Región |
 |---------|-----------|--------|
-| Antamina | `_vv3HkItEzKqytLHk` | Ancash |
+| Antamina | `_vv3HkItEzKqytLHk` | Ancash (solo AIO — ver abajo), Huánuco (solo Llata) |
 | Bechtel / Newmont | `_dtKCh5CjRws0ai8H` | Cajamarca |
-| Clientes Sur | `_vuHd6hNkLlFj0nPK` | Ica, Arequipa |
+| Clientes Sur | `_vuHd6hNkLlFj0nPK` | Ica (Arequipa siempre bloqueada, ver `fix_arequipa_block`) |
 | Clientes Norte | `_i5tst4lPDJ5oTSW4` | La Libertad |
-| Pisco | `_XgBrvIyMIWm5YzLP` | Pisco |
+| Pisco | `_XgBrvIyMIWm5YzLP` | Ica — provincia Pisco |
 | Ninguno (Coyuntura Nacional) | `_pM02KT2QspbdR8os` | Nacional |
+
+**Área de Influencia Operativa (AIO) de Antamina** — Ancash fuera de esta lista → IGNORAR:
+- Huari: San Marcos, Chavín de Huántar, Huachis, San Pedro de Chana
+- Bolognesi: Huallanca, Aquia, Chiquián, Cajacay, Antonio Raymondi, Colquioc, Huayllacayán
+- Recuay: Catac, Pampas Chico, Marca, Llacllín, Pararín
+- Huarmey: toda la provincia (puerto/mineroducto)
+- Huánuco: solo distrito Llata (Huamalíes)
+- Pasco: **no es zona de Antamina** (se ignora salvo coyuntura política nacional)
 
 ### Ajustes operativos
 
@@ -253,10 +288,11 @@ webhook_handler.process_webhook()
   → mapear bundle → cliente (Antamina)
   → encolar en webhook_queue
 
-main.py ciclo
+main.py ciclo (thread dedicado de webhooks, drena apenas llega)
   → deduplicator.already_processed() → False
+  → classifier.pre_filtro_ia() → POSIBLE (si dice RUIDO, se descarta aquí sin gastar el prompt grande)
   → classifier.classify() → ALRT
-  → deduplicator.is_duplicate_alert() → False
+  → deduplicator.is_duplicate_alert() + mark_alert_sent() → registrada (atómico, evita duplicados por carrera)
   → formatter.format_whatsapp() → mensaje
   → queue.push() → encolado
   → sender_whatsapp.send() → enviado
@@ -273,17 +309,29 @@ Policía detiene a cinco sujetos involucrados en asaltos a comercios en San Marc
 
 ## Clientes Configurados
 
-| Cliente | Grupo WhatsApp | Rubro |
-|---------|---------------|-------|
-| Antamina | Antamina | Minería |
-| Bechtel / Newmont | Bechtel / Newmont | Minería |
-| Clientes Sur | Clientes Sur | Agroindustria |
-| Clientes Norte | Clientes Norte | Agroindustria |
-| Agrícola Santa Azul | Agricola Santa Azul | Agroindustria |
-| Agrícola Huarmey | Clientes Norte | Agroindustria |
-| Pisco | Pisco | Pesca |
-| Petrotal | Petrotal | Hidrocarburos |
-| Ninguno (Coyuntura Nacional) | Coyuntura Nacional | — |
+El rubro se determina por el **contenido de la noticia**, no por el cliente (ver filtro de
+corrección por contenido en `classifier.py` — evita que todo lo de un grupo agro salga
+"Agroindustria" aunque sea, por ejemplo, un operativo militar o de minería informal en la misma zona).
+
+| Cliente | Grupo WhatsApp | Zona | Rubro por defecto |
+|---------|---------------|------|-------------------|
+| Antamina | Antamina | Ancash (AIO), Huánuco (Llata) | Minería |
+| Bechtel / Newmont | Bechtel / Newmont | Cajamarca | Minería |
+| Pisco | Pisco | Ica — provincia Pisco | Pesca |
+| Ninguno (Coyuntura Nacional) | Coyuntura Nacional | Nacional | No es un rubro |
+| **Agro Norte** (La Libertad) | Clientes Norte | La Libertad | Agroindustria |
+| — Hortifrut | Clientes Norte | | |
+| — Mission | Clientes Norte | | |
+| **Agro Sur** (Ica) | Clientes Sur | Ica | Agroindustria |
+| — Agrícola 3P | Clientes Sur | | |
+| — Agrícola Chapi | Clientes Sur | | |
+| — Campos Andino | Clientes Sur | | |
+| — Campos del Sur | Clientes Sur | | |
+| — Don Ricardo | Clientes Sur | | |
+| — RVR | Clientes Sur | | |
+| — SunFruits | Clientes Sur | | |
+| — Uvica | Clientes Sur | | |
+| — Vanguard | Clientes Sur | | |
 
 ---
 
@@ -311,6 +359,28 @@ Policía detiene a cinco sujetos involucrados en asaltos a comercios en San Marc
 
 ---
 
+## Modos de Webhook
+
+### Modo directo (por defecto)
+`main.py` levanta un servidor Flask local (puerto 5000) y rss.app le manda los eventos ahí
+directamente. Como la PC no tiene IP pública, se necesita un túnel (ej. **ngrok**) para exponerlo
+a internet, y esa URL hay que registrarla en los 6 webhooks de rss.app. Problema conocido: el
+plan gratis de ngrok cambia de URL cada vez que se reinicia, así que hay que volver a actualizar
+rss.app manualmente cada vez que el túnel se cae.
+
+### Modo relay (recomendado si el túnel se cae seguido)
+Un servicio externo mínimo y sin lógica de negocio (`webhook_relay/`, pensado para desplegar en
+Railway u otro hosting) recibe los webhooks de rss.app y los guarda en memoria. Tu PC los va a
+buscar por **polling** cada pocos segundos (`WEBHOOK_RELAY_POLL_SECONDS`) — así nunca necesitas
+exponer tu propia PC a internet, y la URL del relay no cambia entre reinicios de tu máquina.
+
+Para activarlo: despliega `webhook_relay/` (solo `app.py`, `requirements.txt`, `Procfile` — no
+necesita nada más del proyecto), define `RELAY_TOKEN` en ese servicio, y en tu `.env` local
+configura `WEBHOOK_RELAY_URL` + `WEBHOOK_RELAY_TOKEN` con la misma URL/token. Actualiza los
+webhooks de rss.app para que apunten a `https://tu-relay/webhook?client=<Nombre>&token=<token>`.
+
+---
+
 ## Troubleshooting
 
 ### "Connection refused :5000"
@@ -324,11 +394,16 @@ WEBHOOK_PORT=5001
 # Verificar que el bundle_id esté en config.py → RSS_BUNDLES
 ```
 
-### "DATABASE_URL no está configurado"
+### "No se pudo abrir la BD local" / errores de SQLite
 ```bash
-# Agregar al .env:
-DATABASE_URL=postgresql://user:pass@host/db
+# Verifica que exista (o se pueda crear) la carpeta data/ junto a main.py.
+# Si la BD esta corrupta o quieres empezar de cero, borra los archivos y se
+# recrean solos en el siguiente arranque:
+rm data/dedup.db data/dedup.db-wal data/dedup.db-shm
+rm data/queue.db data/queue.db-wal data/queue.db-shm
 ```
+El sistema sigue funcionando (sin dedup temporalmente) aunque la BD falle — ver
+"Resiliente a caídas de infraestructura" arriba.
 
 ### Mensajes duplicados en WhatsApp
 ```bash
@@ -362,12 +437,15 @@ Verificar en `config.py`:
 
 | Métrica | Valor |
 |---------|-------|
-| Latencia webhooks | < 1 segundo |
-| Deduplicación | 7 niveles (URL → IA semántica) |
+| Latencia webhooks | Segundos (drenado continuo en thread dedicado, no atado al ciclo de RSS) |
+| Deduplicación | 7 niveles (URL → IA semántica), chequeo + registro atómico |
 | Ciclo polling | 5 minutos |
-| Items por bundle | 50 (últimas 2 horas) |
+| Items por bundle | 50 (últimas 8 horas) |
 | Ventana dedup | 24 horas |
-| Almacenamiento BD | ~1 KB por alerta |
+| Almacenamiento BD | SQLite local, ~1 KB por alerta |
+| Volumen típico | ~1,000-5,000 llamadas al clasificador/día según tráfico de noticias |
+| Filtrado por pre-filtro | ~60-85% del volumen evaluado se descarta antes del prompt completo |
+| Costo OpenAI aprox. | ~$2-4/día con tráfico normal (gpt-4o-mini, con prompt caching) |
 
 ---
 
@@ -381,6 +459,26 @@ Verificar en `config.py`:
 ---
 
 ## Changelog
+
+### v3.0 (Agosto 26, 2026) — control de costos, migración a SQLite, y varios fixes de precisión
+- **Pre-filtro de dos etapas** (`classifier.py`, `prompts/pre_filtro_prompt.md` nuevo): antes de gastar el prompt completo (~10K tokens), un prompt barato (~2.5K tokens) con razonamiento breve decide RUIDO/POSIBLE. Bajó el gasto de OpenAI de ~$6/día a ~$2-4/día sin perder alertas reales — clave: dejarlo razonar 1-2 oraciones antes de responder (no forzar la respuesta en 5 tokens), igual que el prompt completo tenía "espacio para pensar" al llenar todo el JSON
+- **Prompt principal reducido** (`prompts/classifier_prompt.md`): se sacó el bloque completo de "IGNORAR — ruido local" (turismo, empleo, avisos municipales, etc.) del prompt principal — ahora vive solo en el pre-filtro, bajando el prompt principal de ~10,700 a ~8,200 tokens antes de que fuera creciendo de nuevo con los fixes de precisión de este changelog
+- **Migración de PostgreSQL a SQLite local** (`deduplicator.py`, `alert_queue.py`): la deduplicación y la cola de alertas ya no dependen de un servidor Postgres externo (Neon) ni de sus cuotas de cómputo — todo vive en `data/dedup.db` y `data/queue.db`, archivos locales sin configuración
+- **Resiliencia a caídas de base de datos** (`deduplicator.py`, `alert_queue.py`, `main.py`): antes, si la BD fallaba al iniciar, todo el proceso crasheaba en loop infinito (pasó con Neon agotado). Ahora los constructores no crashean, y cada chequeo de duplicado atrapa `DBUnavailable` y sigue funcionando sin dedup en vez de morir
+- **Bug de duplicados por condición de carrera, corregido de raíz** (`deduplicator.py`, `main.py`): dos posts casi simultáneos del mismo hecho podían pasar ambos el chequeo de duplicado antes de que cualquiera se registrara. `mark_alert_sent()` ahora retorna `True`/`False` según si realmente logró registrar la alerta (y no solo si la intentó), y `main.py` revisa ese resultado antes de enviar — el "perdedor" de la carrera ya no se manda
+- **Bug de dedup por URL nunca activo, corregido**: `deduplicator.py` buscaba `alert["url"]`, pero `classifier.py` guarda el link como `alert["source_url"]` — el nivel 0 de dedup (URL exacta) estuvo desactivado desde siempre por este desajuste de nombres
+- **Bug de Sheets faltante en el camino de webhooks**: `sh_sender.append_row()` solo se llamaba en el camino de RSS, nunca en el de webhooks — como la mayoría del tráfico llega por webhook, ~44% de las alertas no se registraban en Sheets
+- **Drenado de webhooks desacoplado del ciclo de RSS** (`webhook_server.py`, `main.py`): antes se procesaban máx. 10 eventos de webhook por ciclo de 5 min; con tráfico alto la cola se llenaba (500) y rss.app recibía 503. Ahora un thread dedicado drena apenas llega cada evento
+- **Modo relay de webhooks** (`webhook_relay/` nuevo, `webhook_server.py`, `config.py`): alternativa a ngrok para no depender de un túnel que cambia de URL en cada caída — un servicio externo mínimo recibe el webhook y la PC lo va a buscar por polling
+- **Fixes de precisión geográfica en `classifier.py`/`classifier_prompt.md`**: ubicaciones inventadas quando no hay ninguna mencionada en el texto (ej. "ANCASH HUARMEY" puesto por defecto en noticias nacionales o conferencias sin lugar); sesgo por nombre de página/hashtag ignorando el hashtag real del texto (`fix_dept_by_hashtag`); caseríos/anexos de la zona de Antamina (Carhuayoc, Ayash, Juprog, Huaripampa, Pichiu, Yanacancha) mal asignados a Huarmey (`fix_antamina_anexos`); noticias de "Gobierno Regional [zona]"/GORE puestas como NACIONAL en vez de la región real (`fix_nacional_by_gore_mention`)
+- **Filtro de "protesta genérica"**: una protesta/paro/marcha que NO menciona a ninguna empresa cliente ni una zona crítica se baja de CRIT a ALRT (REGLA 9 es para protestas CONTRA el cliente, no cualquier protesta social aunque el motivo de fondo sea grave)
+- **Filtro de seguimiento posterior a homicidio, reforzado en Python**: red de seguridad independiente de que la IA declare bien `etapa_hecho` — si el texto dice "sepultan"/"entierro"/"piden justicia" junto con una palabra de muerte violenta, se fuerza IGNORAR
+- **Rubro corregido por contenido, no por cliente**: el rubro por defecto de "Clientes Norte/Sur" es Agroindustria, pero eso hacía que operativos militares o hechos de minería en esa zona salieran mal etiquetados — ahora se corrige por palabras clave del texto (`classifier.py`) y el prompt explica que el rubro es el tema real de la noticia, no el del grupo de cliente
+- **Filtro de obras de agua en zonas agro**: obras/trabajos de agua potable o riego en Pisco/La Libertad/Agro Sur Ica ahora cuentan como relevantes (mínimo INFO) aunque no haya conflicto — el agua es crítica para estos clientes
+- **Reclasificación de clientes agro**: Agrícola 3P, Campos Andino y SunFruits movidos de "Agro Norte" (La Libertad) a "Agro Sur" (Ica) en `config.py` y el prompt — dato incorrecto desde antes
+- **Pasco removido de Antamina**: el prompt decía "Pasco → Antamina" pero el código Python (`DEPARTAMENTOS_SIN_CLIENTE`, `DEPT_TO_CLIENT`) ya lo excluía desde antes — se corrigió el prompt para que coincida
+- **Columna "Categoria" de Sheets sin forzar mayúsculas** (`formatter.py`): se guardaba todo en mayúsculas aunque el clasificador ya devuelve la categoría bien capitalizada (ej. "Agro-Agua-Medioambiente")
+- **Bug de "Coyuntura Nacional" descartando categorías válidas no-políticas** (`classifier.py`): un filtro exigía que la categoría fuera literalmente "Coyuntura Politica" para que sobreviviera cualquier alerta nacional — mataba de forma incorrecta noticias nacionales legítimas de otra categoría (ej. economía/MINEM)
 
 ### v2.3 (Junio 09, 2026)
 - **Filtro de empleo/reclutamiento** (`classifier.py`): convocatorias laborales, ofertas de trabajo y procesos CAS (nivel INFO) forzados a IGNORAR mediante filtro duro con constante `EMPLEO_TERMS` — no aplica a CRIT/ALRT para no bloquear accidentes laborales ni huelgas

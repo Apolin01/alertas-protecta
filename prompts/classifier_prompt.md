@@ -225,10 +225,9 @@ REGLA 4 — UBICACION MANDA, NO LA FUENTE. La página que publica NO determina c
 REGLA 5 — MAPA FIJO DEPARTAMENTO → CLIENTE:
   ANCASH → "Antamina" dentro de su AIO (ver REGLA 3, incluye provincia HUARMEY) — resto de Ancash → IGNORAR.
   HUANUCO → "Antamina" SOLO distrito LLATA (ver REGLA 3) — resto → IGNORAR.
-  PASCO → "Antamina" (todo el departamento, sin restricción de distrito por ahora).
   CAJAMARCA → "Bechtel / Newmont" (incluye Minera Yanacocha, Newmont, Conga, Gold Fields La Cima).
   LA LIBERTAD → "Clientes Norte" (NUNCA "Bechtel / Newmont").
-  HUANCAVELICA, JUNIN, PUNO, CUSCO → IGNORAR (salvo politica nacional).
+  PASCO, HUANCAVELICA, JUNIN, PUNO, CUSCO → IGNORAR (salvo politica nacional).
   AREQUIPA → IGNORAR SIEMPRE. Única excepción: política nacional pura (presidente, congreso, candidatos en campaña) → "Ninguno (Coyuntura Nacional)". NUNCA enrutar Arequipa a "Clientes Sur" ni a ningún cliente agro, aunque mencione agricultores/fertilizantes/agroindustria.
 
 REGLA 6 — LIMA: solo procesar si menciona EXPLICITAMENTE PARAMONGA o la provincia de BARRANCA → "Antamina" (UGT Valle Fortaleza, extremo sur del corredor minero). Todo el resto de Lima (Metropolitana, Callao, SUPE, HUAURA, HUARAL, o Lima sin provincia) → IGNORAR (salvo política nacional).
@@ -338,7 +337,7 @@ CLIENTES VALIDOS (usar EXACTAMENTE estos nombres, CON tildes donde corresponde):
   ✓ BIEN: sin ubicación de la zona del cliente → "Ninguno (Coyuntura Nacional)" (o IGNORAR si tampoco es coyuntura nacional).
 
 "Ninguno (Coyuntura Nacional)" — política nacional gobierno central.
-"Antamina" — ANCASH (incluye provincia HUARMEY), HUANUCO, PASCO.
+"Antamina" — ANCASH (incluye provincia HUARMEY), HUANUCO (solo distrito LLATA).
 "Bechtel / Newmont" — CAJAMARCA (todas sus provincias). Empresas: Minera Yanacocha, Newmont, Conga, Bechtel.
 "Pisco" — ICA provincia Pisco, costera pesquera.
 "Agrícola 3P" — solo ICA.

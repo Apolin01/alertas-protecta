@@ -634,14 +634,20 @@ class Deduplicator:
         return False
 
     @_reconnect_and_retry
-    def mark_alert_sent(self, alert: dict):
-        """Registra una alerta enviada, con doble-check de duplicado antes de guardar."""
+    def mark_alert_sent(self, alert: dict) -> bool:
+        """Registra una alerta enviada, con doble-check de duplicado antes de guardar.
+        Retorna True si se registro de verdad (alerta nueva, el llamador debe
+        proceder a enviarla) o False si resulto ser un duplicado (el llamador
+        NO debe enviarla — sin este valor de retorno, dos posts casi
+        simultaneos del mismo hecho pueden pasar ambos is_duplicate_alert()
+        pero solo uno lograr insertar aqui, y si el llamador ignora el
+        resultado, el que "perdio" la insercion se manda igual como duplicado."""
         if alert.get("nivel") == "IGNORAR":
-            return
+            return False
 
         if self.is_duplicate_alert(alert):
             log.info(f"[Dedup] Rechazado: duplicado detectado en mark_alert_sent, NO se guarda")
-            return
+            return False
 
         ch = self._content_hash(alert)
         titulo = alert.get("titulo", "").strip()
@@ -663,7 +669,7 @@ class Deduplicator:
                 if cur.fetchone():
                     log.info(f"[Dedup] Rechazo en transacción: ya existe titulo_hash + dept")
                     self.conn.rollback()
-                    return
+                    return False
 
             cur.execute(
                 """INSERT INTO sent_alerts
@@ -692,8 +698,10 @@ class Deduplicator:
 
             if rows_affected > 0:
                 log.info(f"[Dedup] ✓ Alerta registrada para futuras dedups")
+                return True
             else:
                 log.info(f"[Dedup] ℹ️ Alerta ya existe (ON CONFLICT), no se insertó")
+                return False
 
         except Exception as e:
             try:
@@ -701,6 +709,9 @@ class Deduplicator:
             except Exception:
                 pass
             log.error(f"[Dedup] Error registrando alerta: {e}")
+            # Error real de BD (no un duplicado) — dejamos pasar el envio para
+            # no bloquear alertas por un fallo tecnico, igual que DBUnavailable.
+            return True
 
     # ─────────────────────────────────────────────
     # LIMPIEZA
