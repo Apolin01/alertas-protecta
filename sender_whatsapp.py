@@ -41,6 +41,29 @@ def _fallback_image(message: str, alert: dict | None) -> str:
         return ""
 
 
+# Mensajes de error del bridge que significan que el WebSocket a WhatsApp se
+# cayó DURANTE el envío (sock.sendMessage lanzó antes de que WhatsApp recibiera
+# nada). A diferencia de un 500 genérico, aquí SÍ es seguro reintentar: no se
+# entregó. Sin esto, estas caídas de conexión se marcaban "enviada / no
+# confirmar" y la alerta se perdía (Sheets la tenía, WhatsApp no).
+_BRIDGE_ERR_NO_ENTREGADO = (
+    "econnreset", "econnrefused", "epipe", "connection closed",
+    "connection terminated", "socket hang up", "timed out", "timeout",
+    "not connected", "no esta conectado", "lost connection", "websocket",
+    "stream errored", "connection lost",
+)
+
+
+def _bridge_500_es_reintentable(resp) -> bool:
+    """True si el 500 del bridge es una caída de conexión (no se entregó nada,
+    seguro reintentar); False si es un 500 ambiguo (pudo haberse entregado)."""
+    try:
+        err = str(resp.json().get("error", "")).lower()
+    except Exception:
+        err = (resp.text or "").lower()[:300]
+    return any(p in err for p in _BRIDGE_ERR_NO_ENTREGADO)
+
+
 class WhatsAppSender:
     def __init__(self, config: Config):
         self.config = config
@@ -126,6 +149,9 @@ class WhatsAppSender:
                         img_str = "✓ con imagen de respaldo" if data2.get("with_image") else "solo texto"
                         log.info(f"Bridge OK ({img_str}, reintento) → {data2.get('group', group_name)}")
                         return True
+                    if _bridge_500_es_reintentable(resp2):
+                        log.error(f"Bridge error {resp2.status_code} en reintento (conexión caída, NO entregado): {resp2.text[:200]}")
+                        return False
                     log.error(f"Bridge error {resp2.status_code} en reintento (sin confirmar): {resp2.text[:200]}")
                     return None
 
@@ -141,8 +167,13 @@ class WhatsAppSender:
                 log.error(f"Bridge: grupo '{group_name}' no encontrado. {resp.json().get('hint','')}")
                 return False
             else:
-                # 500 = sendMessage lanzó excepción. Pudo fallar antes o DESPUÉS
-                # de que WhatsApp aceptara el mensaje: desenlace no confirmable.
+                if _bridge_500_es_reintentable(resp):
+                    # El WebSocket a WhatsApp se cayó durante el envío — sendMessage
+                    # lanzó ANTES de que WhatsApp recibiera nada. Seguro reintentar.
+                    log.error(f"Bridge error {resp.status_code} (conexión caída, NO entregado): {resp.text[:200]}")
+                    return False
+                # 500 ambiguo: sendMessage lanzó, pudo fallar antes o DESPUÉS de
+                # que WhatsApp aceptara. Desenlace no confirmable → no reintentar.
                 log.error(f"Bridge error {resp.status_code} (sin confirmar): {resp.text[:200]}")
                 return None
 

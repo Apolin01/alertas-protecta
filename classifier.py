@@ -223,6 +223,120 @@ def fix_dept_by_hashtag(alert: dict, texto: str) -> dict:
     return alert
 
 
+# ─────────────────────────────────────────────────────────────
+# Frases que ubican a una PERSONA (victima/detenido/fallecido), no al hecho:
+# su lugar de origen, residencia o traslado. La IA a veces las toma como el
+# lugar del hecho (ej. "natural de Chillia" → pone Chillia aunque el ataque
+# fue en Trujillo).
+# ─────────────────────────────────────────────────────────────
+_ORIGEN_PERSONA_MARKERS = (
+    "natural de", "natural del", "oriundo de", "oriunda de",
+    "procedente de", "proveniente de", "nacido en", "nacida en",
+    "residente en", "residente de", "reside en", "vecino de", "vecina de",
+    "domiciliado en", "domiciliada en", "vive en", "vivia en",
+    "sepultado en", "sepultada en", "enterrado en", "enterrada en",
+    "velado en", "sera sepultado", "sera sepultada",
+    "trasladado a", "trasladada a", "trasladado al", "trasladada al",
+    "llevado a", "llevada a", "llevado al", "llevada al",
+    "internado en", "internada en", "derivado a", "derivada a", "evacuado a",
+)
+
+_HECHO_LUGAR_MARKERS = (
+    "ocurrio en", "ocurrido en", "ocurrida en", "registrado en", "registrada en",
+    "se registro en", "se produjo en", "se dio en", "sucedio en", "acontecio en",
+    "en el distrito de", "en la provincia de", "en la ciudad de",
+    "en la avenida", "en la av.", "en la av ", "en la calle", "en el jiron",
+    "en el sector", "a la altura de", "en inmediaciones de", "en plena", "en pleno",
+    "reportan en", "reportado en",
+)
+
+
+def _lugares_conocidos_dept(config, dept: str) -> dict:
+    """{lugar_normalizado: (PROVINCIA, DISTRITO)} para un departamento. Los
+    distritos se agregan primero (mas especificos); el nombre de provincia
+    queda solo si no coincide con un distrito."""
+    out = {}
+    dpd = getattr(config, "DEPT_PROV_DIST", {}) if config else {}
+    for prov, distritos in dpd.get(dept, {}).items():
+        for dist in distritos:
+            out.setdefault(_strip_accents(dist.lower()), (prov, dist))
+        out.setdefault(_strip_accents(prov.lower()), (prov, ""))
+    return out
+
+
+def fix_ubicacion_por_origen_victima(alert: dict, texto: str, config=None) -> dict:
+    """Red de seguridad: si la provincia/distrito que puso la IA aparece en el
+    texto SOLO como lugar de ORIGEN / residencia / traslado de una persona
+    ('natural de Chillia', 'vecino de X', 'trasladado al hospital de Y') y nunca
+    como el lugar del hecho, re-ancla al lugar real — priorizando uno que se
+    repita en el cuerpo del texto (aunque tambien este como hashtag).
+      Ej: '#TRUJILLO ... ataque en la avenida Husares de Junin, en Trujillo ...
+      la victima es natural del distrito de Chillia, provincia de Pataz'
+      → el hecho es TRUJILLO, no CHILLIA/PATAZ."""
+    if not texto:
+        return alert
+    dept = (alert.get("departamento") or "").upper().strip()
+    if not dept or dept == "NACIONAL":
+        return alert
+
+    texto_norm = _strip_accents(texto.lower())
+
+    def _solo_como_origen(lugar_norm: str) -> bool:
+        idxs = [m.start() for m in re.finditer(rf"\b{re.escape(lugar_norm)}\b", texto_norm)]
+        if not idxs:
+            return False
+        for i in idxs:
+            if any(mk in texto_norm[max(0, i - 60):i] for mk in _HECHO_LUGAR_MARKERS):
+                return False
+        return all(
+            any(mk in texto_norm[max(0, i - 60):i] for mk in _ORIGEN_PERSONA_MARKERS)
+            for i in idxs
+        )
+
+    prov = (alert.get("provincia") or "").upper().strip()
+    dist = (alert.get("distrito") or "").upper().strip()
+    sospechosos_norm = {
+        _strip_accents(c.lower()) for c in (prov, dist)
+        if c and c != dept and _solo_como_origen(_strip_accents(c.lower()))
+    }
+    if not sospechosos_norm:
+        return alert
+
+    conocidos = _lugares_conocidos_dept(config, dept)
+    hashtags = {_strip_accents(h.lower()) for h in re.findall(r"#(\w+)", texto_norm)}
+
+    candidatos = []
+    for lugar_norm, (prov_real, dist_real) in conocidos.items():
+        if len(lugar_norm) < 4 or lugar_norm in sospechosos_norm:
+            continue
+        apariciones = len(re.findall(rf"\b{re.escape(lugar_norm)}\b", texto_norm))
+        if apariciones == 0 or _solo_como_origen(lugar_norm):
+            continue
+        score = apariciones + (3 if lugar_norm in hashtags else 0) + (1 if dist_real else 0)
+        candidatos.append((score, prov_real, dist_real))
+
+    if not candidatos:
+        log.info(
+            f"Ubicacion por origen de victima: '{prov}/{dist}' parece ser el lugar "
+            f"de origen de una persona, no del hecho — se limpia a solo {dept}"
+        )
+        alert["provincia"] = ""
+        alert["distrito"] = ""
+        alert["region"] = dept
+        return alert
+
+    candidatos.sort(reverse=True)
+    _, prov_real, dist_real = candidatos[0]
+    log.info(
+        f"Ubicacion corregida (origen de victima): IA puso '{prov}/{dist}' pero eso "
+        f"es de donde es una persona; el hecho ocurrio en "
+        f"'{prov_real}/{dist_real or prov_real}' (mencionado en el texto)"
+    )
+    alert["provincia"] = prov_real
+    alert["distrito"] = dist_real or prov_real
+    return alert
+
+
 _GORE_DEPTOS = ("LA LIBERTAD", "ANCASH", "CAJAMARCA", "ICA", "HUANUCO")
 
 
@@ -477,6 +591,29 @@ NIVEL_TO_RELEVANCIA = {"CRIT": "Alto", "ALRT": "Medio", "INFO": "Bajo"}
 
 def _strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+_EMPRESA_CLIENTE_PREFILTRO_TERMS = tuple(sorted(set(EMPRESA_CLIENTE_TERMS + (
+    "SUNFRUITS", "SUN-FRUITS", "AGRICOLA 3P", "AGRICOLA CHAPI", "CAMPOS ANDINO",
+    "SANTA AZUL", "AGRICOLA SANTA AZUL", "GOLD FIELDS",
+))))
+
+_EMPRESA_CLIENTE_RE = re.compile(
+    r"\b(" + "|".join(re.escape(_strip_accents(t)) for t in _EMPRESA_CLIENTE_PREFILTRO_TERMS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def menciona_empresa_cliente(texto: str) -> bool:
+    """True si el texto nombra explicitamente a una empresa cliente (o su mina,
+    proyecto o marca). Cuando es True el post se manda DIRECTO al clasificador
+    completo, sin pasar por el pre-filtro barato (es_ruido_evidente /
+    pre_filtro_ia): el prompt (REGLA 9) garantiza que un cliente nombrado nunca
+    cae en IGNORAR, asi que descartarlo como 'ruido' antes de clasificar era una
+    perdida real (ej. comunicados del propio cliente durante un conflicto
+    laboral, que el pre-filtro marcaba RUIDO por parecer publicidad/RSE)."""
+    if not texto:
+        return False
+    return bool(_EMPRESA_CLIENTE_RE.search(_strip_accents(texto)))
 
 
 def fix_ica_provincia_by_text(alert: dict, texto: str, config) -> dict:
@@ -827,6 +964,7 @@ class AlertClassifier:
 
             alert = fix_nacional_by_gore_mention(alert, text)
             alert = fix_dept_by_hashtag(alert, text)
+            alert = fix_ubicacion_por_origen_victima(alert, text, self.config)
             alert = fix_dept_by_city(alert, self.config)
             alert = fix_provincia_by_distrito(alert, self.config)
             alert = fix_antamina_anexos(alert)

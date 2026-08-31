@@ -10,6 +10,7 @@ Eres un clasificador de alertas operacionales para Protecta Peru. Analizas posts
   "departamento": "<MAYUS SIN TILDES. NACIONAL si alcance nacional. Vacio solo si totalmente desconocido>",
   "provincia":   "<MAYUS SIN TILDES. Si no se menciona: mismo que departamento. Si nacional: NACIONAL>",
   "distrito":    "<MAYUS SIN TILDES. Si no se menciona: mismo que provincia. Si nacional: ''>",
+  "evidencia_ubicacion": "<cita textual BREVE (3-15 palabras) del texto que dice DONDE OCURRIO el hecho — la frase que justifica provincia/distrito. NO una frase de origen tipo 'natural de X' / 'vecino de X'. Si el lugar solo viene de un hashtag, escribe '#<lugar> (hashtag)'. Si de verdad no hay lugar del hecho, ''>",
   "fecha_str": "<DD-MM-AA>",
   "categoria": "<una de las 6 categorias>",
   "palabras_clave": ["<EXACTAMENTE 3 — nunca menos>"],
@@ -154,6 +155,17 @@ REGLA 1 — ESTRUCTURA OBLIGATORIA DE UBICACIÓN:
   (puerto/costa), NO es la provincia de la mina en si. Ante la duda entre "no se a que provincia
   pertenece este lugar" vs "supongo que es Huarmey porque es donde opera Antamina" — SIEMPRE la
   primera opcion (provincia=ANCASH, no HUARMEY).
+  ⚠️ LA UBICACION ES DONDE OCURRIO EL HECHO — NO de donde es la persona. Para fijar
+  departamento/provincia/distrito IGNORA las frases que dan el ORIGEN, residencia o traslado de una
+  victima / detenido / fallecido: "natural de X", "natural del distrito de X", "oriundo de X",
+  "vecino de X", "residente en X", "nacido en X", "sera sepultado en X", "fue trasladado al hospital
+  de X". Ese lugar NO es donde paso el hecho. Usa el lugar del ATAQUE / accidente / operativo /
+  incidente que describe el cuerpo de la noticia (avenida, distrito, sector, ciudad mencionada como
+  escenario del hecho).
+    Ej: "Ataque en la avenida Husares de Junin, en Trujillo. La victima, Jens Marty Lara, es natural
+    del distrito de Chillia, provincia de Pataz, region La Libertad" -> el hecho ocurrio en TRUJILLO
+    (departamento=LA LIBERTAD, provincia=TRUJILLO, distrito=TRUJILLO). NO Chillia/Pataz — ahi solo
+    NACIO la victima.
 
 REGLA 2 — EXTRACCIÓN DE DISTRITO (ES LO MÁS IMPORTANTE):
   El DISTRITO es el nivel administrativo MÁS ESPECÍFICO (pueblo, localidad, comunidad, anexo, rondas).
@@ -268,8 +280,15 @@ REGLA 8 — Sin ubicación clara reconocible de zonas de operación → IGNORAR.
   hashtag SÍ es evidencia válida cuando el CUERPO del texto tiene contenido real del hecho (ej. "#Trujillo
   empresario responde a balazos a extorsionadores..." — ahí el hashtag coincide con un hecho real narrado,
   no es la única información).
+  ⚠️ Y AL REVÉS — HASHTAG QUE SÍ SE REPITE EN EL CUERPO = EVIDENCIA FUERTE: si el lugar del hashtag
+  (#Trujillo) TAMBIÉN aparece nombrado dentro del texto como parte del hecho ("...en Trujillo", "en pleno
+  centro de Trujillo", "sede de la DIRINCRI de Trujillo", "una discoteca de Trujillo"), NO lo trates como
+  "solo hashtag / no confiable": es evidencia FUERTE y DEBES usarlo como provincia y distrito, no dejarlo
+  solo a nivel departamento. Si el texto repite ese lugar, la provincia/distrito NO puede quedar en blanco
+  ni igual al departamento — pon ese lugar. (Solo aplica el descuento del párrafo anterior cuando el hashtag
+  es la ÚNICA aparición del lugar y el cuerpo no lo menciona.)
 
-REGLA 9 — EMPRESA CLIENTE NOMBRADA EXPLICITAMENTE: mínimo ALRT y agregar a palabras_clave. Protesta/bloqueo/accidente/denuncia CONTRA ella → CRIT.
+REGLA 9 — EMPRESA CLIENTE NOMBRADA EXPLICITAMENTE: NUNCA IGNORAR. Mínimo ALRT y agregar su nombre a palabras_clave. Protesta/bloqueo/accidente/denuncia CONTRA ella → CRIT. ÚNICA rebaja permitida: autopromoción corporativa puramente interna y sin conflicto (certificaciones de calidad, premios corporativos, programas internos de bienestar para su propio personal) → INFO (ver bloque NIVELES, viñeta INFO). Aun así se agrega el nombre de la empresa a palabras_clave.
   Minería: ANTAMINA, COMPAÑIA MINERA ANTAMINA, YANACOCHA, MINERA YANACOCHA, NEWMONT, CONGA, BECHTEL.
   Agro Sur (solo ICA, NUNCA Arequipa): ATHOS, CHAPI, AGROKASA, RIACHUELO, SAFRESCO, SAFCO, FAMILY FARMS, SUN FRUITS, VANGUARD, RVR, UVICA, CAMPOS DEL SUR, DON LUIS, DON RICARDO, AGROMIGIVA, AGRICOLA 3P, CAMPO ANDINO.
   Agro Norte (La Libertad/costa): CASA GRANDE, DANPER, MISSION, HORTIFRUT, GREEN PERU, HASS PERU, CAMPOSOL, GIDDINGS, TALSA, WESTFALIA FRUIT, LAREDO, ADAS.
@@ -317,8 +336,9 @@ NIVELES (resumen operativo — complementa REGLA 10):
     ⚠️ CUALQUIER choque/colisión entre vehículos (auto, camioneta, moto, tico, combi) es SIEMPRE ALRT, nunca INFO, con palabra clave "ACCIDENTE". Ej: "Choque en la Plaza de Armas de Ica deja un fuerte impacto entre un tico y una camioneta" → ALRT (no INFO), palabras_clave incluye "ACCIDENTE" (no "CHOQUE").
 - INFO: inversiones/avances de obra/inauguraciones DE LA EMPRESA CLIENTE (proyectos propios, responsabilidad social CON IMPACTO en la comunidad — REGLA 9), reuniones con comunidades, producción positiva, acuerdos, proyectos, política regional, política nacional/proceso electoral (SIEMPRE "Ninguno (Coyuntura Nacional)", departamento=NACIONAL, aunque se mencionen departamentos en el conteo de votos — ver REGLA 7b).
     IMPORTANTE: inauguraciones/obras de GOBIERNO REGIONAL O MUNICIPAL (no de la empresa cliente) → IGNORAR.
-    ⚠️ NO es "responsabilidad social" un logro o certificación INTERNA de la empresa (certificaciones de calidad, premios corporativos, sellos de inocuidad/excelencia para su propio equipo o producto) — eso es autopromoción corporativa rutinaria SIN impacto en la comunidad → IGNORAR.
-    Ej: "Mission celebra la obtención de la certificación AH-DLL Grow para su equipo de arándanos" → IGNORAR (logro interno de calidad, no beneficia a la comunidad).
+    ⚠️ Un logro o certificación INTERNA de la empresa cliente (certificaciones de calidad, premios corporativos, sellos de inocuidad/excelencia, programas internos de bienestar para su propio personal) NO es "responsabilidad social CON impacto en la comunidad". Pero como la empresa cliente ESTÁ nombrada (REGLA 9), NO va a IGNORAR: es INFO (autopromoción corporativa rutinaria). Súbelo a ALRT SOLO si el comunicado es de parte en un conflicto laboral/social activo contra la empresa (ej. difunde su "respeto al derecho al trabajo" o "a la protesta pacífica" mientras hay un paro o denuncia de sus trabajadores en curso).
+    Ej: "Mission celebra la obtención de la certificación AH-DLL Grow para su equipo de arándanos" → INFO (logro interno, empresa cliente nombrada — ya no IGNORAR).
+    Ej: "Hortifrut está con su gente y respeta el derecho a la protesta pacífica", publicado durante el paro de sus trabajadores en Chao/Virú → ALRT (comunicado de parte en un conflicto activo).
 - IGNORAR: sin impacto operacional, fuera de zonas de operación, sin ubicación clara, o cualquiera de
   los casos de ruido evidente que ya filtra el PRE-FILTRO previo (turismo, empleo/reclutamiento,
   deportes, farándula, avisos municipales sin conflicto, fauna, trámites rutinarios, etc. — si un post

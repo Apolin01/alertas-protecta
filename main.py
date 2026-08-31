@@ -28,7 +28,9 @@ from whatsapp_image import BRIDGE_BASE64_LIMIT, generate_alert_image_data_uri
 
 from rss_fetcher import RSSFetcher as Fetcher
 
-from classifier import AlertClassifier, es_ruido_evidente, log_prefiltro_stats
+from classifier import (
+    AlertClassifier, es_ruido_evidente, log_prefiltro_stats, menciona_empresa_cliente,
+)
 from deduplicator import Deduplicator, DBUnavailable
 from formatter import AlertFormatter
 from router import RegionRouter
@@ -276,23 +278,36 @@ def process_page(page_name, config, classifier, dedup,
         if not post.get("text", "").strip():
             continue
 
-        if es_ruido_evidente(post.get("text", "")):
-            log.info(f"[{page_name}] Pre-filtro: ruido evidente — omitido sin llamar a la IA")
-            continue
+        texto_post = post.get("text", "")
 
-        prefiltro_decision = None
-        try:
-            with _ai_lock:
-                prefiltro_decision = classifier.pre_filtro_ia(post.get("text", ""))
-        except Exception as e:
-            log.warning(f"[{page_name}] Pre-filtro error: {e}")
+        # Si el texto NOMBRA a una empresa cliente (su mina/proyecto/marca), el
+        # post NUNCA se descarta en el pre-filtro barato (regex o IA): va directo
+        # al clasificador completo, que aplica REGLA 9 (cliente nombrado => nunca
+        # IGNORAR; el nivel lo decide el clasificador segun el contexto). Sin
+        # esto, un comunicado del propio cliente (RSE, salud interna, aniversario)
+        # se perdia como "ruido" antes de llegar a clasificarse.
+        es_cliente = menciona_empresa_cliente(texto_post)
 
-        if prefiltro_decision == "RUIDO":
-            preview_ruido = post.get("text", "")[:150].replace("\n", " ")
-            log.info(f"[{page_name}] Pre-filtro IA: RUIDO — omitido: {preview_ruido}...")
-            continue
+        if not es_cliente:
+            if es_ruido_evidente(texto_post):
+                log.info(f"[{page_name}] Pre-filtro: ruido evidente — omitido sin llamar a la IA")
+                continue
 
-        preview = post.get("text", "")[:100].replace("\n", " ")
+            prefiltro_decision = None
+            try:
+                with _ai_lock:
+                    prefiltro_decision = classifier.pre_filtro_ia(texto_post)
+            except Exception as e:
+                log.warning(f"[{page_name}] Pre-filtro error: {e}")
+
+            if prefiltro_decision == "RUIDO":
+                preview_ruido = texto_post[:150].replace("\n", " ")
+                log.info(f"[{page_name}] Pre-filtro IA: RUIDO — omitido: {preview_ruido}...")
+                continue
+        else:
+            log.info(f"[{page_name}] Empresa cliente nombrada en el texto — se omite el pre-filtro, va directo al clasificador")
+
+        preview = texto_post[:100].replace("\n", " ")
         log.info(f"[{page_name}] Clasificando: {preview}...")
 
         with _ai_lock:
@@ -450,23 +465,32 @@ def run_forever():
         if not post.get("text", "").strip():
             return
 
-        if es_ruido_evidente(post.get("text", "")):
-            log.info(f"[WEBHOOK] Pre-filtro: ruido evidente — omitido sin llamar a la IA")
-            return
+        texto_post = post.get("text", "")
 
-        prefiltro_decision = None
-        try:
-            with _ai_lock:
-                prefiltro_decision = classifier.pre_filtro_ia(post.get("text", ""))
-        except Exception as e:
-            log.warning(f"[WEBHOOK] Pre-filtro error: {e}")
+        # Ver comentario en process_page(): si el texto NOMBRA a una empresa
+        # cliente, se salta el pre-filtro y va directo al clasificador (REGLA 9).
+        es_cliente = menciona_empresa_cliente(texto_post)
 
-        if prefiltro_decision == "RUIDO":
-            preview_ruido = post.get("text", "")[:150].replace("\n", " ")
-            log.info(f"[WEBHOOK] Pre-filtro IA: RUIDO — omitido: {preview_ruido}...")
-            return
+        if not es_cliente:
+            if es_ruido_evidente(texto_post):
+                log.info(f"[WEBHOOK] Pre-filtro: ruido evidente — omitido sin llamar a la IA")
+                return
 
-        preview = post.get("text", "")[:100].replace("\n", " ")
+            prefiltro_decision = None
+            try:
+                with _ai_lock:
+                    prefiltro_decision = classifier.pre_filtro_ia(texto_post)
+            except Exception as e:
+                log.warning(f"[WEBHOOK] Pre-filtro error: {e}")
+
+            if prefiltro_decision == "RUIDO":
+                preview_ruido = texto_post[:150].replace("\n", " ")
+                log.info(f"[WEBHOOK] Pre-filtro IA: RUIDO — omitido: {preview_ruido}...")
+                return
+        else:
+            log.info(f"[WEBHOOK] Empresa cliente nombrada en el texto — se omite el pre-filtro, va directo al clasificador")
+
+        preview = texto_post[:100].replace("\n", " ")
         log.info(f"[WEBHOOK] Clasificando: {preview}...")
 
         with _ai_lock:

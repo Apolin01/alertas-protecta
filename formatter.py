@@ -297,22 +297,28 @@ class AlertFormatter:
 
         prov_mencionada = prov_raw.strip().upper()
         dist_mencionado = dist_raw.strip().upper()
+        dist_norm = (dist or "").strip().upper()
+
+        # Distrito a mostrar: el normalizado si aporta algo (no es el dept ni la
+        # provincia). Si _normalize_ubication lo colapso al dept/provincia porque
+        # el distrito no figura en el catalogo de config (ej. "Salas Guadalupe",
+        # que INEI registra como "Salas"), caer al distrito REAL mencionado en la
+        # alerta en vez de repetir el departamento (salia "ICA ICA"). Si no hay
+        # distrito real → solo el departamento (la provincia no se muestra).
+        if dist_norm and dist_norm != dept and dist_norm != prov_mencionada:
+            dist_display = dist_norm
+        elif dist_mencionado and dist_mencionado not in (dept, prov_mencionada):
+            dist_display = dist_mencionado
+        else:
+            dist_display = ""
 
         if dept == "NACIONAL":
             ubicacion = "NACIONAL"
         elif prov_mencionada == "PISCO":
             # Caso especial: Pisco tiene grupo propio, se usa como nivel principal.
-            if dist_mencionado and dist_mencionado != prov_mencionada:
-                ubicacion = f"PISCO {dist}".strip()
-            else:
-                ubicacion = "PISCO"
+            ubicacion = f"PISCO {dist_display}".strip() if dist_display else "PISCO"
         else:
-            # DEPARTAMENTO + DISTRITO solo si el distrito fue realmente
-            # mencionado en la alerta (no un relleno de _normalize_ubication).
-            if dist_mencionado and dist_mencionado != dept:
-                ubicacion = f"{dept} {dist}".strip()
-            else:
-                ubicacion = dept
+            ubicacion = f"{dept} {dist_display}".strip() if dist_display else dept
 
         log.info(f"[DEBUG-fmt] PID={os.getpid()} file={__file__} dept_raw={dept_raw!r} prov_raw={prov_raw!r} dist_raw={dist_raw!r} -> ubicacion={ubicacion!r}")
 
