@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Protecta Perú — Monitor WhatsApp</title>
+<style>
+  :root {
+    /* WhatsApp Web — tema claro */
+    --wa-bg: #ffffff;
+    --wa-header: #f0f2f5;
+    --wa-row-hover: #f5f6f6;
+    --wa-row-selected: #f0f2f5;
+    --wa-border: #e9edef;
+    --wa-text: #111b21;
+    --wa-text-dim: #667781;
+    --wa-chat-bg: #efeae2;
+    --wa-bubble-out: #d9fdd3;
+    --wa-bubble-in: #ffffff;
+    --wa-green: #25d366;
+    --wa-tick-read: #53bdeb;
+    --wa-link: #027eb5;
+    --wa-amber-banner: #fef3c4;
+    --wa-amber-banner-text: #7a5b00;
+    --crit: #c23a3a; --alrt: #a8770f; --info: #2f8f63;
+    --page-bg: #eef1ec;
+    --shadow: 0 1px 2px rgba(17,27,33,.06), 0 10px 28px rgba(17,27,33,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --wa-bg: #111b21; --wa-header: #202c33; --wa-row-hover: #182229;
+      --wa-row-selected: #2a3942; --wa-border: #222d34; --wa-text: #e9edef;
+      --wa-text-dim: #8696a0; --wa-chat-bg: #0b141a; --wa-bubble-out: #005c4b;
+      --wa-bubble-in: #202c33; --wa-green: #25d366; --wa-tick-read: #53bdeb;
+      --wa-link: #53bdeb; --wa-amber-banner: #2a2415; --wa-amber-banner-text: #d8a84a;
+      --crit: #e2676b; --alrt: #d8a84a; --info: #45b47d;
+      --page-bg: #070b0c; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --wa-bg: #111b21; --wa-header: #202c33; --wa-row-hover: #182229;
+    --wa-row-selected: #2a3942; --wa-border: #222d34; --wa-text: #e9edef;
+    --wa-text-dim: #8696a0; --wa-chat-bg: #0b141a; --wa-bubble-out: #005c4b;
+    --wa-bubble-in: #202c33; --wa-link: #53bdeb;
+    --wa-amber-banner: #2a2415; --wa-amber-banner-text: #d8a84a; --page-bg: #070b0c;
+  }
+  :root[data-theme="light"] {
+    --wa-bg: #ffffff; --wa-header: #f0f2f5; --wa-row-hover: #f5f6f6;
+    --wa-row-selected: #f0f2f5; --wa-border: #e9edef; --wa-text: #111b21;
+    --wa-text-dim: #667781; --wa-chat-bg: #efeae2; --wa-bubble-out: #d9fdd3;
+    --wa-bubble-in: #ffffff; --wa-link: #027eb5;
+    --wa-amber-banner: #fef3c4; --wa-amber-banner-text: #7a5b00; --page-bg: #eef1ec;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--page-bg); color: var(--wa-text);
+    font-family: "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  body { padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+
+  .wrap { width: 100%; max-width: 1020px; display: flex; flex-direction: column; gap: 14px; }
+
+  .statusbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    background: var(--wa-bg); border: 1px solid var(--wa-border); border-radius: 10px;
+    padding: 9px 14px; font-size: 13px; box-shadow: var(--shadow);
+  }
+  .status-chip { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--wa-text-dim); }
+  .dot.on { background: var(--wa-green); box-shadow: 0 0 0 0 rgba(37,211,102,.5); animation: pulse 2.2s infinite; }
+  @media (prefers-reduced-motion: reduce) { .dot.on { animation: none; } }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(37,211,102,.45); } 70% { box-shadow: 0 0 0 8px rgba(37,211,102,0); } 100% { box-shadow: 0 0 0 0 rgba(37,211,102,0); } }
+  .statusbar .uptime { color: var(--wa-text-dim); font-variant-numeric: tabular-nums;
+    font-family: "SFMono-Regular", "Cascadia Code", "Consolas", monospace; }
+  .statusbar .uptime b { color: var(--wa-text); }
+
+  .wa-app {
+    display: flex; height: 640px; border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--wa-border); box-shadow: var(--shadow);
+  }
+
+  .wa-sidebar { width: 330px; flex-shrink: 0; background: var(--wa-bg); display: flex; flex-direction: column;
+    border-right: 1px solid var(--wa-border); }
+  .wa-sidebar-header { background: var(--wa-header); padding: 12px 16px; font-weight: 650; font-size: 15px; }
+  .wa-list { overflow-y: auto; flex: 1; }
+
+  .wa-row { display: flex; align-items: center; gap: 12px; padding: 11px 14px; cursor: pointer;
+    border-bottom: 1px solid var(--wa-border); }
+  .wa-row:hover { background: var(--wa-row-hover); }
+  .wa-row.selected { background: var(--wa-row-selected); }
+
+  .avatar { width: 42px; height: 42px; border-radius: 50%; color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
+    flex-shrink: 0; position: relative; }
+  .avatar.mini { width: 28px; height: 28px; font-size: 11px; }
+  .avatar .presence { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--wa-green); border: 2px solid var(--wa-bg); }
+
+  .wa-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .wa-row-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .wa-row-name { font-size: 14.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wa-row-time { font-size: 11.5px; color: var(--wa-text-dim); flex-shrink: 0; }
+  .wa-row-bottom { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .wa-row-preview { font-size: 13px; color: var(--wa-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wa-row-preview b { color: var(--wa-text); font-weight: 600; }
+  .wa-badge { background: var(--wa-green); color: #06281c; font-size: 11px; font-weight: 700;
+    min-width: 19px; height: 19px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    padding: 0 5px; flex-shrink: 0; }
+
+  .wa-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .wa-main-header { background: var(--wa-header); padding: 10px 16px; display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid var(--wa-border); }
+  .wa-main-titles { flex: 1; min-width: 0; cursor: default; }
+  .wa-main-title { font-size: 15px; font-weight: 650; }
+  .wa-main-sub { font-size: 12.5px; color: var(--wa-text-dim); }
+  .wa-header-icons { display: flex; align-items: center; gap: 18px; color: var(--wa-text-dim); font-size: 17px; }
+
+  .wa-messages { flex: 1; background: var(--wa-chat-bg); overflow-y: auto; padding: 16px 6%;
+    display: flex; flex-direction: column; gap: 3px; }
+  .wa-empty { margin: auto; text-align: center; color: var(--wa-text-dim); font-size: 13px; max-width: 220px; }
+
+  .day-sep { align-self: center; font-size: 12px; color: var(--wa-text-dim);
+    background: var(--wa-header); border-radius: 8px; padding: 5px 12px; margin: 10px 0 8px;
+    text-transform: capitalize; box-shadow: 0 1px 1px rgba(0,0,0,.08); }
+  .unread-banner { align-self: center; font-size: 12.5px; font-weight: 600;
+    background: var(--wa-amber-banner); color: var(--wa-amber-banner-text);
+    border-radius: 8px; padding: 6px 14px; margin: 6px 0 10px; }
+
+  .msg-row { display: flex; align-items: flex-end; gap: 8px; margin-top: 9px; }
+  .msg-row.outgoing { justify-content: flex-end; }
+
+  .bubble { max-width: 68%; background: var(--wa-bubble-out);
+    border-radius: 8px; padding: 7px 9px 6px 10px; box-shadow: 0 1px 1px rgba(0,0,0,.08);
+    opacity: 0; transform: translateY(6px); animation: appear .3s ease forwards;
+    border-left: 3px solid var(--sev, transparent); }
+  @media (prefers-reduced-motion: reduce) { .bubble { animation: none; opacity: 1; transform: none; } }
+  @keyframes appear { to { opacity: 1; transform: translateY(0); } }
+  .bubble.crit { --sev: var(--crit); } .bubble.alrt { --sev: var(--alrt); } .bubble.info { --sev: var(--info); }
+  .bubble.fail { background: var(--wa-bubble-in); --sev: var(--wa-text-dim); opacity: .75 !important; }
+  .bubble.incoming { background: var(--wa-bubble-in); }
+
+  .bubble-sender-line { display: flex; align-items: baseline; gap: 7px; margin-bottom: 3px; }
+  .bubble-sender { font-size: 12.5px; font-weight: 700; }
+  .bubble-sender-num { font-size: 11px; color: var(--wa-text-dim); }
+
+  .bubble-head { font-size: 12.5px; font-weight: 700; margin: 0 0 3px; color: var(--wa-text); }
+  .bubble-head.crit { color: var(--crit); } .bubble-head.alrt { color: var(--alrt); } .bubble-head.info { color: var(--info); }
+  .bubble-body { font-size: 13.5px; line-height: 1.38; margin: 0; color: var(--wa-text); white-space: pre-wrap; }
+  .bubble-source { font-size: 11.5px; color: var(--wa-text-dim); margin-top: 4px; word-break: break-all; }
+  .bubble-source a { color: var(--wa-link); text-decoration: underline; }
+  .bubble-error { font-size: 11px; color: var(--crit); margin-top: 3px; }
+  .bubble-meta { display: flex; justify-content: flex-end; align-items: center; gap: 3px; margin-top: 3px; }
+  .bubble-time { font-size: 10.5px; color: var(--wa-text-dim); font-variant-numeric: tabular-nums; }
+  .ticks { color: var(--wa-tick-read); font-size: 12px; }
+
+  .footnote { font-size: 11.5px; color: var(--wa-text-dim); text-align: center; max-width: 480px; align-self: center; }
+
+  @media (max-width: 680px) {
+    .wa-app { flex-direction: column; height: auto; }
+    .wa-sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--wa-border); max-height: 260px; }
+    .wa-messages { max-height: 420px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="statusbar">
+    <div class="status-chip"><span class="dot" id="statusDot"></span> <span id="statusText">Conectando…</span></div>
+    <div class="uptime">Conectado hace <b id="uptime">—</b></div>
+  </div>
+
+  <div class="wa-app">
+    <div class="wa-sidebar">
+      <div class="wa-sidebar-header">Chats</div>
+      <div class="wa-list" id="waList"></div>
+    </div>
+    <div class="wa-main">
+      <div class="wa-main-header">
+        <div class="avatar" id="mainAvatar" style="width:38px;height:38px"></div>
+        <div class="wa-main-titles">
+          <div class="wa-main-title" id="mainTitle">Selecciona un chat</div>
+          <div class="wa-main-sub" id="mainSub">Toca aquí para ver la información del grupo</div>
+        </div>
+        <div class="wa-header-icons">
+          <span title="Buscar">🔍</span>
+          <span title="Más opciones">⋮</span>
+        </div>
+      </div>
+      <div class="wa-messages" id="waMessages">
+        <div class="wa-empty">Elige un grupo a la izquierda para ver sus alertas.</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="footnote">Mensajes reales recibidos por el bridge (<code>POST /send</code>) o sincronizados por WhatsApp desde los grupos — no hay datos simulados en esta vista.</p>
+</div>
+
+<script>
+  var GROUP_ICON_SVG = '<svg viewBox="0 0 24 24" width="22" height="22" fill="#fff"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>';
+
+  var SENDER_COLORS = ["#8d6a3f", "#6a4fa3", "#3f6fa6", "#a6447a", "#3f8f6a", "#3f8fa6", "#a65c3f", "#4f7a3f"];
+  function colorFor(str) {
+    var h = 0;
+    for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+    return SENDER_COLORS[h % SENDER_COLORS.length];
+  }
+
+  var REAL_GROUPS = [];
+  var selectedReal = null;
+  var connectedSince = null;
+  var lastId = 0;
+  // real -> { messages: [...], lastSeenId: 0 }
+  var store = {};
+
+  function fmtUptime(iso) {
+    if (!iso) return "—";
+    var s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 0) s = 0;
+    var hh = String(Math.floor(s / 3600)).padStart(2, "0");
+    var mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+    var ss = String(s % 60).padStart(2, "0");
+    return hh + ":" + mm + ":" + ss;
+  }
+  setInterval(function () { document.getElementById("uptime").textContent = fmtUptime(connectedSince); }, 1000);
+
+  function initials(name) {
+    var words = (name || "").replace(/[^\p{L}\s]/gu, "").trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return "?";
+    return (words[0][0] + (words[1] ? words[1][0] : "")).toUpperCase();
+  }
+
+  function fmtTime(iso) {
+    var d = new Date(iso);
+    return d.toLocaleTimeString("es-PE", { hour: "numeric", minute: "2-digit" });
+  }
+
+  function dayLabel(iso) {
+    var d = new Date(iso);
+    var today = new Date();
+    var sameDay = function (a, b) { return a.toDateString() === b.toDateString(); };
+    if (sameDay(d, today)) return "Hoy";
+    var yest = new Date(today); yest.setDate(yest.getDate() - 1);
+    if (sameDay(d, yest)) return "Ayer";
+    return d.toLocaleDateString("es-PE", { weekday: "long" });
+  }
+
+  function sevOf(headerLine) {
+    if (/^CRIT/i.test(headerLine)) return "crit";
+    if (/^ALRT/i.test(headerLine)) return "alrt";
+    if (/^INFO/i.test(headerLine)) return "info";
+    return "";
+  }
+
+  function parseMsg(m) {
+    var lines = (m.message || "").split("\n");
+    var headerLine = (lines[0] || "").replace(/^\*|\*$/g, "");
+    var bodyLine = lines.slice(1).join(" ");
+    var srcMatch = bodyLine.match(/^(.*?)\s*-\s*FUENTE:\s*(.*)$/i);
+    var body = srcMatch ? srcMatch[1].trim() : bodyLine.trim();
+    var source = srcMatch ? srcMatch[2].trim() : "";
+    return { headerLine: headerLine, body: body, source: source, sev: sevOf(headerLine) };
+  }
+
+  function ensureBucket(real) {
+    if (!store[real]) store[real] = { messages: [], lastSeenId: 0 };
+    return store[real];
+  }
+  function unreadCount(real) {
+    var b = ensureBucket(real);
+    return b.messages.filter(function (m) { return m.id > b.lastSeenId; }).length;
+  }
+
+  function renderSidebar() {
+    var list = document.getElementById("waList");
+    list.innerHTML = "";
+    REAL_GROUPS.forEach(function (g) {
+      var bucket = ensureBucket(g.real);
+      var last = bucket.messages[bucket.messages.length - 1];
+      var parsed = last ? parseMsg(last) : null;
+      var unread = unreadCount(g.real);
+
+      var row = document.createElement("div");
+      row.className = "wa-row" + (g.real === selectedReal ? " selected" : "");
+      row.onclick = function () { selectGroup(g); };
+
+      var preview = "Aún sin alertas";
+      if (last) {
+        var who = !last.ok ? "✗ " : (last.from_me ? "Tú: " : (last.sender_name ? last.sender_name + ": " : ""));
+        var img = last.with_image ? "📷 " : "";
+        preview = "<b>" + who + "</b>" + img + (parsed.headerLine || parsed.body).slice(0, 40);
+      }
+
+      row.innerHTML =
+        '<div class="avatar" style="background:' + g.color + '">' + GROUP_ICON_SVG +
+          (g.cached ? '<span class="presence"></span>' : "") + "</div>" +
+        '<div class="wa-row-main">' +
+          '<div class="wa-row-top"><span class="wa-row-name">' + g.real + '</span>' +
+            '<span class="wa-row-time">' + (last ? fmtTime(last.ts) : "") + "</span></div>" +
+          '<div class="wa-row-bottom"><span class="wa-row-preview">' + preview + '</span>' +
+            (unread > 0 && g.real !== selectedReal ? '<span class="wa-badge">' + unread + "</span>" : "") +
+          "</div>" +
+        "</div>";
+      list.appendChild(row);
+    });
+  }
+
+  var lastRenderedDay = null;
+
+  function selectGroup(g) {
+    selectedReal = g.real;
+    var bucket = ensureBucket(g.real);
+    var pendingUnread = unreadCount(g.real);
+
+    document.getElementById("mainTitle").textContent = g.real;
+    var av = document.getElementById("mainAvatar");
+    av.style.background = g.color;
+    av.innerHTML = GROUP_ICON_SVG;
+
+    var box = document.getElementById("waMessages");
+    box.innerHTML = "";
+    lastRenderedDay = null;
+
+    if (!bucket.messages.length) {
+      box.innerHTML = '<div class="wa-empty">Aún no llegó ninguna alerta real a este grupo.</div>';
+    } else {
+      bucket.messages.forEach(function (m, idx) {
+        var isFirstUnread = pendingUnread > 0 && m.id > bucket.lastSeenId &&
+          (idx === 0 || bucket.messages[idx - 1].id <= bucket.lastSeenId);
+        maybeInsertDaySeparator(box, m.ts);
+        if (isFirstUnread) {
+          var banner = document.createElement("div");
+          banner.className = "unread-banner";
+          banner.textContent = pendingUnread + (pendingUnread === 1 ? " mensaje no leído" : " mensajes no leídos");
+          box.appendChild(banner);
+        }
+        appendBubble(box, m, false);
+      });
+      box.scrollTop = box.scrollHeight;
+    }
+
+    bucket.lastSeenId = bucket.messages.length ? bucket.messages[bucket.messages.length - 1].id : bucket.lastSeenId;
+    renderSidebar();
+  }
+
+  function maybeInsertDaySeparator(box, ts) {
+    var label = dayLabel(ts);
+    if (label !== lastRenderedDay) {
+      var sep = document.createElement("div");
+      sep.className = "day-sep";
+      sep.textContent = label;
+      box.appendChild(sep);
+      lastRenderedDay = label;
+    }
+  }
+
+  function appendBubble(box, m, isLive) {
+    var empty = box.querySelector(".wa-empty");
+    if (empty) empty.remove();
+
+    if (isLive) maybeInsertDaySeparator(box, m.ts);
+
+    var p = parseMsg(m);
+    var isIncoming = m.ok && !m.from_me;
+
+    var row = document.createElement("div");
+    row.className = "msg-row" + (isIncoming ? "" : " outgoing");
+
+    var avatarHtml = "";
+    if (isIncoming) {
+      var who = m.sender_name || m.sender_number || "?";
+      avatarHtml = '<div class="avatar mini" style="background:' + colorFor(who) + '">' + initials(who) + "</div>";
+    }
+
+    var bubble = document.createElement("div");
+    bubble.className = "bubble " + p.sev + " " + (!m.ok ? "fail" : (isIncoming ? "incoming" : ""));
+    bubble.innerHTML =
+      (isIncoming ? '<div class="bubble-sender-line"><span class="bubble-sender" style="color:' + colorFor(m.sender_name || m.sender_number || "?") + '">' +
+        (m.sender_name || "Desconocido") + "</span>" +
+        (m.sender_number ? '<span class="bubble-sender-num">' + m.sender_number + "</span>" : "") + "</div>" : "") +
+      (p.headerLine ? '<p class="bubble-head ' + p.sev + '">' + p.headerLine + "</p>" : "") +
+      (p.body ? '<p class="bubble-body">' + p.body + "</p>" : "") +
+      (p.source ? '<div class="bubble-source">FUENTE: <a href="' + p.source + '" target="_blank" rel="noopener noreferrer">' + p.source + "</a></div>" : "") +
+      (!m.ok ? '<div class="bubble-error">✗ No entregado: ' + (m.error || "error desconocido") + "</div>" : "") +
+      '<div class="bubble-meta"><span class="bubble-time">' + fmtTime(m.ts) + "</span>" +
+        (m.ok && !isIncoming ? '<span class="ticks">✓✓</span>' : "") + "</div>";
+
+    if (avatarHtml) row.insertAdjacentHTML("beforeend", avatarHtml);
+    row.appendChild(bubble);
+    box.appendChild(row);
+    if (isLive) box.scrollTop = box.scrollHeight;
+  }
+
+  function pollStatus() {
+    fetch("/status").then(r => r.json()).then(function (s) {
+      connectedSince = s.connected_since;
+      var dot = document.getElementById("statusDot");
+      var text = document.getElementById("statusText");
+      if (s.ready) { dot.className = "dot on"; text.textContent = "WhatsApp conectado"; }
+      else { dot.className = "dot"; text.textContent = "WhatsApp no conectado"; }
+
+      REAL_GROUPS = s.real_groups || [];
+      REAL_GROUPS.forEach(g => ensureBucket(g.real));
+      if (!selectedReal && REAL_GROUPS.length) {
+        var def = REAL_GROUPS.find(g => g.key === "Clientes Norte") || REAL_GROUPS[0];
+        selectGroup(def);
+      } else {
+        renderSidebar();
+      }
+    }).catch(function () {
+      document.getElementById("statusText").textContent = "Sin conexión al bridge";
+    });
+  }
+
+  function pollRecent() {
+    fetch("/recent?after=" + lastId).then(r => r.json()).then(function (data) {
+      (data.items || []).forEach(function (m) {
+        var bucket = ensureBucket(m.real_name);
+        bucket.messages.push(m);
+        if (m.real_name === selectedReal) {
+          appendBubble(document.getElementById("waMessages"), m, true);
+          bucket.lastSeenId = m.id;
+        }
+      });
+      if (data.items && data.items.length) renderSidebar();
+      lastId = data.last_id || lastId;
+    }).catch(function () {});
+  }
+
+  pollStatus();
+  pollRecent();
+  setInterval(pollStatus, 5000);
+  setInterval(pollRecent, 2000);
+</script>
+</body>
+</html>

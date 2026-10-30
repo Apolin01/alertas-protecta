@@ -1,12 +1,9 @@
 
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    DisconnectReason,
-    fetchLatestBaileysVersion,
-    isJidGroup,
-    downloadMediaMessage,
-} = require("@whiskeysockets/baileys");
+// @whiskeysockets/baileys >=6.7.x es ESM-puro ("type": "module"), no se puede
+// cargar con require() directo — se resuelve con import() dinámico antes de
+// llamar startSock() (ver bootstrap al final del archivo).
+let makeWASocket, useMultiFileAuthState, DisconnectReason,
+    fetchLatestBaileysVersion, isJidGroup, downloadMediaMessage;
 const { Boom } = require("@hapi/boom");
 const express  = require("express");
 const QRCode   = require("qrcode");
@@ -62,6 +59,18 @@ const GROUP_MAP = {
     "Ninguno (Coyuntura Nacional)": "GII - Coyuntura política nacional - Protecta Peru",
 };
 
+// Los 6 grupos reales de WhatsApp (sin las variantes/alias lógicos de
+// GROUP_MAP) — lo que el dashboard muestra como lista de chats, igual que
+// aparecen en WhatsApp de verdad.
+const REAL_GROUPS = [
+    { key: "Clientes Norte",     real: "GII - Agro norte - Protecta Peru",               color: "#8d6a3f" },
+    { key: "Coyuntura Nacional", real: "GII - Coyuntura política nacional - Protecta Peru", color: "#6a4fa3" },
+    { key: "Bechtel / Newmont",  real: "GII - Bechtel - Protecta Peru",                   color: "#3f6fa6" },
+    { key: "Clientes Sur",       real: "GII - Agro sur - Protecta Peru",                  color: "#a6447a" },
+    { key: "Antamina",           real: "GII - Antamina - Protecta Peru",                  color: "#3f8f6a" },
+    { key: "Pisco",              real: "GII - Pisco - Protecta Peru",                     color: "#3f8fa6" },
+];
+
 // ─────────────────────────────────────────────
 // CACHE
 // ─────────────────────────────────────────────
@@ -115,6 +124,36 @@ let isReady            = false;
 let qrBase64           = "";
 let reconnectTimer     = null;
 let badSessionStreak   = 0;  // cuántos badSession consecutivos sin conectar
+let connectedAt        = null;  // ISO timestamp de la última vez que abrió conexión
+
+// Historial en memoria de los últimos /send recibidos, para el dashboard de
+// monitoreo en vivo (ver GET /recent y GET /dashboard). No persiste a disco.
+const recentMessages = [];
+let nextMsgId = 1;
+function recordMessage(entry) {
+    recentMessages.push({ id: nextMsgId++, ts: new Date().toISOString(), ...entry });
+    if (recentMessages.length > 200) recentMessages.shift();
+}
+
+// Los 6 chatId reales que nos interesa escuchar para el dashboard — se
+// recalcula cuando cambia groupCache (son pocos, no hace falta indexar).
+function trackedRealNameForJid(jid) {
+    for (const g of REAL_GROUPS) {
+        if (groupCache[g.real] === jid) return g.real;
+    }
+    return null;
+}
+
+function extractText(messageContent) {
+    if (!messageContent) return "";
+    return (
+        messageContent.conversation ||
+        messageContent.extendedTextMessage?.text ||
+        messageContent.imageMessage?.caption ||
+        messageContent.videoMessage?.caption ||
+        ""
+    );
+}
 
 async function loadGroups() {
     console.log("\n[Cache] Cargando grupos via groupFetchAllParticipating...");
@@ -166,6 +205,7 @@ async function startSock() {
 
         if (connection === "close") {
             isReady = false;
+            connectedAt = null;
             groupCache = {};
             loadCacheFromDisk();
             const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
@@ -207,32 +247,73 @@ async function startSock() {
             badSessionStreak = 0;  // conexión exitosa → resetear contador
             isReady  = true;
             qrBase64 = "";
+            connectedAt = new Date().toISOString();
             await loadGroups();
         }
     });
 
-    // Capturar grupos desde mensajes entrantes/salientes
-    sock.ev.on("messages.upsert", async ({ messages }) => {
+    // Capturar grupos desde mensajes entrantes/salientes + alimentar el
+    // dashboard con CUALQUIER mensaje real que llegue a los 6 grupos
+    // rastreados (los mande este bridge, producción, o un humano) — WhatsApp
+    // sincroniza el contenido a este dispositivo vinculado igual, sin
+    // importar quién lo mandó.
+    sock.ev.on("messages.upsert", async ({ messages, type }) => {
         for (const msg of messages) {
             const jid = msg.key.remoteJid;
             if (!jid || !isJidGroup(jid)) continue;
-            if (Object.values(groupCache).includes(jid)) continue;
 
-            try {
-                const meta = await sock.groupMetadata(jid);
-                if (meta?.subject) {
-                    groupCache[meta.subject] = jid;
-                    saveCacheToDisk();
-                    console.log(`[Cache] ✅ Grupo capturado: "${meta.subject}" → ${jid}`);
-                    const ok = Object.values(GROUP_MAP).filter(n => groupCache[n]).length;
-                    console.log(`[Cache] Progreso: ${ok}/${Object.keys(GROUP_MAP).length}`);
-                }
-            } catch (_) {}
+            if (!Object.values(groupCache).includes(jid)) {
+                try {
+                    const meta = await sock.groupMetadata(jid);
+                    if (meta?.subject) {
+                        groupCache[meta.subject] = jid;
+                        saveCacheToDisk();
+                        console.log(`[Cache] ✅ Grupo capturado: "${meta.subject}" → ${jid}`);
+                        const ok = Object.values(GROUP_MAP).filter(n => groupCache[n]).length;
+                        console.log(`[Cache] Progreso: ${ok}/${Object.keys(GROUP_MAP).length}`);
+                    }
+                } catch (_) {}
+            }
+
+            // Solo mensajes nuevos en tiempo real (no resincronización de
+            // historial al reconectar), y solo de los 6 grupos que importan.
+            if (type !== "notify") continue;
+            const realName = trackedRealNameForJid(jid);
+            if (!realName) continue;
+            const text = extractText(msg.message);
+            if (!text) continue;
+
+            const logicalKey = (REAL_GROUPS.find(g => g.real === realName) || {}).key || realName;
+            const participant = msg.key.participant || msg.key.remoteJid || "";
+            const digits = participant.replace(/@.*/, "").replace(/\D/g, "");
+            const senderNumber = digits ? "+" + digits : "";
+            recordMessage({
+                group_name: logicalKey,
+                real_name: realName,
+                message: text,
+                with_image: !!msg.message?.imageMessage,
+                ok: true,
+                from_me: !!msg.key.fromMe,
+                sender_name: msg.pushName || "",
+                sender_number: senderNumber,
+            });
+            console.log(`[Alerta real] "${realName}" ${msg.key.fromMe ? "(este bridge)" : "(producción/otro)"}: ${text.slice(0, 60)}...`);
         }
     });
 }
 
-startSock().catch(e => console.error("Error iniciando Baileys:", e));
+(async () => {
+    const baileysLib = await import("@whiskeysockets/baileys");
+    ({
+        default: makeWASocket,
+        useMultiFileAuthState,
+        DisconnectReason,
+        fetchLatestBaileysVersion,
+        isJidGroup,
+        downloadMediaMessage,
+    } = baileysLib);
+    await startSock();
+})().catch(e => console.error("Error iniciando Baileys:", e));
 
 // ─────────────────────────────────────────────
 // HEARTBEAT externo (healthchecks.io / UptimeRobot Heartbeat)
@@ -270,7 +351,7 @@ app.get("/qr", (req, res) => {
 
 // Auth middleware
 app.use((req, res, next) => {
-    const pub = ["/qr", "/status", "/diagnose", "/favicon.ico", "/"];
+    const pub = ["/qr", "/status", "/diagnose", "/favicon.ico", "/", "/recent", "/dashboard"];
     if (pub.includes(req.path)) return next();
     if (req.headers["x-auth-token"] !== AUTH_TOKEN)
         return res.status(401).json({ error: "Token invalido" });
@@ -278,11 +359,33 @@ app.use((req, res, next) => {
 });
 
 app.get("/status", (req, res) => res.json({
-    ready:         isReady,
-    groups_cached: Object.keys(groupCache).length,
-    mapped_groups: Object.keys(GROUP_MAP).length,
-    hora_servidor: new Date().toISOString(),
+    ready:          isReady,
+    connected_since: connectedAt,
+    groups_cached:  Object.keys(groupCache).length,
+    mapped_groups:  Object.keys(GROUP_MAP).length,
+    logical_groups: Object.keys(GROUP_MAP).map(logical => ({
+        logical,
+        real: GROUP_MAP[logical],
+        cached: !!groupCache[GROUP_MAP[logical]],
+    })),
+    real_groups: REAL_GROUPS.map(g => ({ ...g, cached: !!groupCache[g.real] })),
+    hora_servidor:  new Date().toISOString(),
 }));
+
+// Historial de /send reales, para el dashboard de monitoreo (GET /dashboard).
+// Publico (sin token) porque es solo lectura y para consumo del navegador local.
+app.get("/recent", (req, res) => {
+    const group = req.query.group;
+    const after = parseInt(req.query.after, 10) || 0;
+    let items = recentMessages.filter(m => m.id > after);
+    if (group) items = items.filter(m => m.group_name === group);
+    res.json({ items, last_id: recentMessages.length ? recentMessages[recentMessages.length - 1].id : after });
+});
+
+app.get("/dashboard", (req, res) => {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.sendFile(path.join(__dirname, "dashboard.html"));
+});
 
 app.get("/diagnose", (req, res) => res.json({
     isReady,
@@ -363,12 +466,14 @@ app.post("/send", async (req, res) => {
     const realName = GROUP_MAP[group_name];
     if (!realName) {
         console.error(`[Send] ✗ '${group_name}' no en GROUP_MAP`);
+        recordMessage({ group_name, real_name: null, message, ok: false, error: "Grupo no en GROUP_MAP" });
         return res.status(404).json({ error: `Grupo '${group_name}' no en GROUP_MAP`, available: Object.keys(GROUP_MAP) });
     }
 
     const chatId = groupCache[realName];
     if (!chatId) {
         console.error(`[Send] ✗ Sin chatId para "${realName}". Cache: ${Object.keys(groupCache).length} grupos`);
+        recordMessage({ group_name, real_name: realName, message, ok: false, error: "Grupo no en cache" });
         return res.status(404).json({ error: `Grupo "${realName}" no en cache. Envía un mensaje al grupo desde tu celular.` });
     }
 
@@ -416,6 +521,10 @@ app.post("/send", async (req, res) => {
             console.log(`✅ [texto] → "${realName}"`);
         }
 
+        // No se registra aquí el éxito: el propio "messages.upsert" (más abajo)
+        // va a capturar este mismo mensaje en cuanto WhatsApp lo confirme — así
+        // el dashboard ve todo por la misma vía, sin duplicar entradas.
+
         // Log de respuesta
         return res.json({
             ok: true,
@@ -424,6 +533,7 @@ app.post("/send", async (req, res) => {
         });
     } catch (err) {
         console.error(`❌ Error enviando a "${realName}":`, err.message);
+        recordMessage({ group_name, real_name: realName, message, ok: false, error: err.message });
         return res.status(500).json({ error: err.message });
     }
 });
